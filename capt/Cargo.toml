@@ -8,10 +8,10 @@ license = "Apache-2.0"
 readme = "../README.md"
 keywords = [
     "robotics",
-    "collision checking",
+    "collision-checking",
     "simd",
-    "nearest neighbor",
-    "point cloud",
+    "nearest-neighbor",
+    "point-cloud",
 ]
 categories = ["no-std", "science", "science::robotics", "algorithms"]
 
