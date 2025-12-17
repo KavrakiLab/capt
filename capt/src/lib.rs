@@ -390,6 +390,7 @@ where
     starts: Box<[I]>,
     /// The sets of afforded points for each cell.
     afforded: [Box<[MySimd<A, L>]>; K],
+    r_point: A,
 }
 
 #[repr(C)]
@@ -456,11 +457,46 @@ where
             .expect("index type I must be able to support all points in CAPT during construction")
     }
 
+    /// Construct a new CAPT containing all the points in `points` with a point radius `r_point`.
+    ///
+    /// `r_range` is a `(minimum, maximum)` pair containing the lower and upper bound on the
+    /// radius of the balls which will be queried against the tree.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if there are too many points in the tree to be addressed by `I`, or
+    /// if any points contain non-finite non-real value. This can even be the case if there are
+    /// fewer points in `points` than can be addressed by `I` as the CAPT may duplicate points
+    /// for efficiency.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let points = [[0.0]];
+    ///
+    /// let capt = capt::Capt::<1>::with_point_radius(&points, (0.0, f32::INFINITY), 0.2);
+    ///
+    /// assert!(capt.collides(&[1.0], 1.5));
+    /// assert!(!capt.collides(&[1.0], 0.5));
+    /// ```
+    ///
+    /// If there are too many points in `points`, this could cause a panic!
+    ///
+    /// ```rust,should_panic
+    /// let points = [[0.0]; 256];
+    ///
+    /// // note that we are using `u8` as our index type
+    /// let capt = capt::Capt::<1, 8, f32, u8>::with_point_radius(&points, (0.0, f32::INFINITY), 0.2);
+    /// ```
+    pub fn with_point_radius(points: &[[A; K]], r_range: (A, A), r_point: A) -> Self {
+        Self::try_with_point_radius(points, r_range, r_point)
+            .expect("index type I must be able to support all points in CAPT during construction")
+    }
+
     /// Construct a new CAPT containing all the points in `points`, checking for index overflow.
     ///
     /// `r_range` is a `(minimum, maximum)` pair containing the lower and upper bound on the
     /// radius of the balls which will be queried against the tree.
-    /// `rng` is a random number generator.
     ///
     /// # Errors
     ///
@@ -489,6 +525,48 @@ where
     /// assert!(opt.is_err());
     /// ```
     pub fn try_new(points: &[[A; K]], r_range: (A, A)) -> Result<Self, NewCaptError> {
+        Self::try_with_point_radius(points, r_range, A::ZERO)
+    }
+
+    /// Construct a new CAPT containing all the points in `points` with a point radius `r_point`,
+    /// checking for index overflow.
+    ///
+    /// `r_range` is a `(minimum, maximum)` pair containing the lower and upper bound on the
+    /// radius of the balls which will be queried against the tree.
+    ///
+    /// # Errors
+    ///
+    /// This function will return `Err(NewCaptError::TooManyPoints)` if there are too many points to
+    /// be indexed by `I`. It will return `Err(NewCaptError::NonFinite)` if any element of
+    /// `points` is non-finite.
+    ///
+    /// # Examples
+    ///
+    /// Unwrapping the output from this function is equivalent to calling
+    /// [`Capt::with_point_radius`].
+    ///
+    /// ```
+    /// let points = [[0.0]];
+    ///
+    /// let capt = capt::Capt::<1>::try_with_point_radius(&points, (0.0, f32::INFINITY), 0.01).unwrap();
+    /// ```
+    ///
+    /// In failure, we get an `Err`.
+    ///
+    /// ```
+    /// let points = [[0.0]; 256];
+    ///
+    /// // note that we are using `u8` as our index type
+    /// let opt =
+    ///     capt::Capt::<1, 8, f32, u8>::try_with_point_radius(&points, (0.0, f32::INFINITY), 0.01);
+    ///
+    /// assert!(opt.is_err());
+    /// ```
+    pub fn try_with_point_radius(
+        points: &[[A; K]],
+        r_range: (A, A),
+        r_point: A,
+    ) -> Result<Self, NewCaptError> {
         let n2 = points.len().next_power_of_two();
 
         if points.iter().any(|p| p.iter().any(|x| !x.is_finite())) {
@@ -534,6 +612,7 @@ where
             starts,
             afforded: afforded.map(Vec::into_boxed_slice),
             aabbs,
+            r_point,
         })
     }
 
@@ -708,7 +787,8 @@ where
     ///     capt.collides(&[100.0; 3], 100.0)
     /// );
     /// ```
-    pub fn collides(&self, center: &[A; K], radius: A) -> bool {
+    pub fn collides(&self, center: &[A; K], mut radius: A) -> bool {
+        radius = radius + self.r_point;
         // forward pass through the tree
         let mut test_idx = 0;
         let mut k = 0;
@@ -799,7 +879,7 @@ where
     ///
     /// assert!(tree.collides_simd(&centers, radii));
     /// ```
-    pub fn collides_simd(&self, centers: &[Simd<A, L>; K], radii: Simd<A, L>) -> bool
+    pub fn collides_simd(&self, centers: &[Simd<A, L>; K], mut radii: Simd<A, L>) -> bool
     where
         LaneCount<L>: SupportedLaneCount,
         Simd<A, L>:
@@ -807,6 +887,7 @@ where
         Mask<isize, L>: From<<Simd<A, L> as SimdPartialEq>::Mask>,
         A: Axis + AxisSimd<<Simd<A, L> as SimdPartialEq>::Mask>,
     {
+        radii += Simd::splat(self.r_point);
         let zs = forward_pass_simd(&self.tests, centers);
 
         let mut inbounds = Mask::splat(true);
@@ -1067,5 +1148,15 @@ mod tests {
         for p0 in &points[points.len() / 2..] {
             assert!(p0[0] >= median);
         }
+    }
+
+    #[test]
+    fn point_radius() {
+        let points = [[0.0, 0.0], [0.0, 1.0]];
+        let r_range = (0.0, 1.0);
+
+        let capt: Capt<_, 8, _, u32> = Capt::with_point_radius(&points, r_range, 0.5);
+        assert!(capt.collides(&[0.6, 0.0], 0.2));
+        assert!(!capt.collides(&[0.6, 0.0], 0.05));
     }
 }
