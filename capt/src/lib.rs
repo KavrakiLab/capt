@@ -83,12 +83,12 @@ use core::{
 
 #[cfg(feature = "simd")]
 use core::{
-    ops::{AddAssign, Mul},
+    ops::{AddAssign, Mul, SubAssign},
     ptr,
     simd::{
+        LaneCount, Mask, Simd, SimdElement, SupportedLaneCount,
         cmp::{SimdPartialEq, SimdPartialOrd},
         ptr::SimdConstPtr,
-        LaneCount, Mask, Simd, SimdElement, SupportedLaneCount,
     },
 };
 
@@ -193,14 +193,29 @@ pub trait Axis: PartialOrd + Copy + Sub<Output = Self> + Add<Output = Self> {
 }
 
 #[cfg(feature = "simd")]
+/// A trait used for SIMD elements.
+pub trait AxisSimdElement: SimdElement + Default + Axis {}
+
+#[cfg(feature = "simd")]
 /// A trait used for masks over SIMD vectors, used for parallel querying on [`Capt`]s.
 ///
 /// The interface for this trait should be considered unstable since the standard SIMD API may
 /// change with Rust versions.
-pub trait AxisSimd<M>: SimdElement + Default {
-    #[must_use]
-    /// Determine whether any element of this mask is set to `true`.
-    fn any(mask: M) -> bool;
+pub trait AxisSimd<const L: usize>:
+    Sized
+    + SimdPartialOrd
+    + Add<Output = Self>
+    + AddAssign
+    + Sub<Output = Self>
+    + SubAssign
+    + Mul<Output = Self>
+where
+    LaneCount<L>: SupportedLaneCount,
+{
+    /// Cast a mask for a SIMD vector into a mask of `isize`s.
+    fn cast_mask(mask: <Self as SimdPartialEq>::Mask) -> Mask<isize, L>;
+    /// Determine whether a mask contains any true elements.
+    fn mask_any(mask: <Self as SimdPartialEq>::Mask) -> bool;
 }
 
 /// An index type used for lookups into and out of arrays.
@@ -251,12 +266,18 @@ macro_rules! impl_axis {
         }
 
         #[cfg(feature = "simd")]
-        impl<const L: usize> AxisSimd<Mask<$tm, L>> for $t
+        impl AxisSimdElement for $t {}
+
+        #[cfg(feature = "simd")]
+        impl<const L: usize> AxisSimd<L> for Simd<$t, L>
         where
             LaneCount<L>: SupportedLaneCount,
         {
-            fn any(mask: Mask<$tm, L>) -> bool {
-                Mask::<$tm, L>::any(mask)
+            fn cast_mask(mask: <Self as SimdPartialEq>::Mask) -> Mask<isize, L> {
+                mask.into()
+            }
+            fn mask_any(mask: <Self as SimdPartialEq>::Mask) -> bool {
+                mask.any()
             }
         }
     };
@@ -308,9 +329,8 @@ fn forward_pass_simd<A, const K: usize, const L: usize>(
     centers: &[Simd<A, L>; K],
 ) -> Simd<isize, L>
 where
-    Simd<A, L>: SimdPartialOrd,
-    Mask<isize, L>: From<<Simd<A, L> as SimdPartialEq>::Mask>,
-    A: Axis + AxisSimd<<Simd<A, L> as SimdPartialEq>::Mask>,
+    Simd<A, L>: AxisSimd<L>,
+    A: AxisSimdElement,
     LaneCount<L>: SupportedLaneCount,
 {
     let mut test_idxs: Simd<isize, L> = Simd::splat(0);
@@ -318,7 +338,8 @@ where
     for _ in 0..tests.len().trailing_ones() {
         let test_ptrs = Simd::splat(tests.as_ptr()).wrapping_offset(test_idxs);
         let relevant_tests: Simd<A, L> = unsafe { Simd::gather_ptr(test_ptrs) };
-        let cmp_results: Mask<isize, L> = centers[k % K].simd_ge(relevant_tests).into();
+        let cmp_results: Mask<isize, L> =
+            Simd::<A, L>::cast_mask(centers[k % K].simd_ge(relevant_tests));
 
         let one = Simd::splat(1);
         test_idxs = (test_idxs << one) + one + (cmp_results.to_int() & Simd::splat(1));
@@ -884,10 +905,8 @@ where
     pub fn collides_simd(&self, centers: &[Simd<A, L>; K], mut radii: Simd<A, L>) -> bool
     where
         LaneCount<L>: SupportedLaneCount,
-        Simd<A, L>:
-            SimdPartialOrd + Sub<Output = Simd<A, L>> + Mul<Output = Simd<A, L>> + AddAssign,
-        Mask<isize, L>: From<<Simd<A, L> as SimdPartialEq>::Mask>,
-        A: Axis + AxisSimd<<Simd<A, L> as SimdPartialEq>::Mask>,
+        Simd<A, L>: AxisSimd<L>,
+        A: AxisSimdElement,
     {
         radii += Simd::splat(self.r_point);
         let zs = forward_pass_simd(&self.tests, centers);
@@ -898,7 +917,7 @@ where
 
         unsafe {
             for center in centers {
-                inbounds &= Mask::<isize, L>::from(
+                inbounds &= Simd::<A, L>::cast_mask(
                     (Simd::gather_select_ptr(aabb_ptrs, inbounds, Simd::splat(A::NEG_INFINITY))
                         - radii)
                         .simd_le(*center),
@@ -906,7 +925,7 @@ where
                 aabb_ptrs = aabb_ptrs.wrapping_add(Simd::splat(1));
             }
             for center in centers {
-                inbounds &= Mask::<isize, L>::from(
+                inbounds &= Simd::<A, L>::cast_mask(
                     Simd::gather_select_ptr(aabb_ptrs, inbounds, Simd::splat(A::NEG_INFINITY))
                         .simd_ge(*center - radii),
                 );
@@ -948,7 +967,7 @@ where
                         let diff = vals - n_center[k];
                         dists_sq += diff * diff;
                     }
-                    A::any(dists_sq.simd_le(rs_sq))
+                    Simd::<A, L>::mask_any(dists_sq.simd_le(rs_sq))
                 })
             })
     }
@@ -1046,7 +1065,7 @@ unsafe fn median_partition<A: Axis, const K: usize>(points: &mut [[A; K]], k: us
 
 #[cfg(test)]
 mod tests {
-    use rand::{rngs::SmallRng, Rng, SeedableRng};
+    use rand::{Rng, SeedableRng, rngs::SmallRng};
 
     use super::*;
 

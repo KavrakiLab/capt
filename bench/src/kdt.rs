@@ -1,17 +1,13 @@
 use std::{
     mem::size_of,
-    simd::{num::SimdInt, Simd, SupportedLaneCount},
-};
-
-use capt::{Aabb, Axis, AxisSimd};
-
-use std::simd::{
-    cmp::{SimdPartialEq, SimdPartialOrd},
-    ptr::SimdConstPtr,
-    LaneCount, Mask,
+    simd::{
+        cmp::SimdPartialOrd, num::SimdInt, ptr::SimdConstPtr, LaneCount, Mask, Simd,
+        SupportedLaneCount,
+    },
 };
 
 use crate::{distsq, forward_pass, median_partition};
+use capt::{Aabb, AxisSimd, AxisSimdElement};
 
 #[derive(Clone, Debug, PartialEq)]
 /// A power-of-two KD-tree.
@@ -219,9 +215,8 @@ fn forward_pass_simd<A, const K: usize, const L: usize>(
     centers: &[Simd<A, L>; K],
 ) -> Simd<usize, L>
 where
-    Simd<A, L>: SimdPartialOrd,
-    Mask<isize, L>: From<<Simd<A, L> as SimdPartialEq>::Mask>,
-    A: Axis + AxisSimd<<Simd<A, L> as SimdPartialEq>::Mask>,
+    Simd<A, L>: AxisSimd<L>,
+    A: AxisSimdElement,
     LaneCount<L>: SupportedLaneCount,
 {
     let mut i: Simd<usize, L> = Simd::splat(0);
@@ -229,7 +224,7 @@ where
     for _ in 0..tests.len().trailing_ones() {
         let test_ptrs = Simd::splat(tests.as_ptr()).wrapping_add(i);
         let relevant_tests = unsafe { Simd::gather_ptr(test_ptrs) };
-        let cmp: Mask<isize, L> = centers[k].simd_ge(relevant_tests).into();
+        let cmp: Mask<isize, L> = Simd::<A, L>::cast_mask(centers[k].simd_ge(relevant_tests));
 
         let one = Simd::splat(1);
         i = (i << one) + one + (cmp.to_int().cast() & one);
