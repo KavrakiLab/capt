@@ -1,7 +1,14 @@
 # Collision-Affording Point Trees: SIMD-Amenable Nearest Neighbors for Fast Collision Checking
 
+[![arXiv CAPT](https://img.shields.io/badge/arXiv-2406.02807-b31b1b.svg)](https://arxiv.org/abs/2406.02807)
+
+![Demo video](resources/capt_demo.gif)
+
+_For a full demonstration of CAPTs running in real-time, see [this video](https://www.youtube.com/watch?v=BzDKdrU1VpM)_.
+
 This is a Rust implementation of the _collision-affording point tree_ (CAPT), a data structure for
 SIMD-parallel collision-checking against point clouds.
+The CAPT supports extremely high-throughput collision checking, supporting online, real-time motion planning.
 
 You may also want to look at the following other sources:
 
