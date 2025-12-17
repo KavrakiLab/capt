@@ -1,6 +1,7 @@
 # Collision-Affording Point Trees: SIMD-Amenable Nearest Neighbors for Fast Collision Checking
 
 [![arXiv CAPT](https://img.shields.io/badge/arXiv-2406.02807-b31b1b.svg)](https://arxiv.org/abs/2406.02807)
+[![Crates.io page](https://img.shields.io/crates/v/capt)](https://crates.io/crates/capt)
 
 ![Demo video](doc/capt_demo.gif)
 
