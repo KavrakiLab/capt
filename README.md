@@ -25,8 +25,7 @@ If you use this in an academic work, please cite it as follows:
   author = {Ramsey, Clayton W. and Kingston, Zachary and Thomason, Wil and Kavraki, Lydia E.},
   booktitle = {Robotics: Science and Systems},
   date = {2024},
-  url = {http://arxiv.org/abs/2406.02807},
-  note = {To Appear.}
+  url = {https://www.roboticsproceedings.org/rss20/p038.pdf},
 }
 ```
 
