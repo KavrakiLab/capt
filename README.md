@@ -2,7 +2,7 @@
 
 [![arXiv CAPT](https://img.shields.io/badge/arXiv-2406.02807-b31b1b.svg)](https://arxiv.org/abs/2406.02807)
 
-![Demo video](resources/capt_demo.gif)
+![Demo video](doc/capt_demo.gif)
 
 _For a full demonstration of CAPTs running in real-time, see [this video](https://www.youtube.com/watch?v=BzDKdrU1VpM)_.
 
