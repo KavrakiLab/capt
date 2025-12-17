@@ -3,7 +3,7 @@ use std::{
     simd::{num::SimdInt, Simd, SupportedLaneCount},
 };
 
-use captree::{Aabb, Axis, AxisSimd};
+use capt::{Aabb, Axis, AxisSimd};
 
 use std::simd::{
     cmp::{SimdPartialEq, SimdPartialOrd},

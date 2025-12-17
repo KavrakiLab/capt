@@ -31,7 +31,7 @@
 //! maximum radius used for querying.
 //!
 //! ```rust
-//! use captree::Capt;
+//! use capt::Capt;
 //!
 //! // list of points in cloud
 //! let points = [[0.0, 1.1], [0.2, 3.1]];
@@ -46,7 +46,7 @@
 //! the radius range.
 //!
 //! ```rust
-//! # use captree::Capt;
+//! # use capt::Capt;
 //! # let points = [[0.0, 1.1], [0.2, 3.1]];
 //! # let capt = Capt::<2>::new(&points, (0.05, 2.0));
 //! let center = [0.0, 0.0]; // center of sphere
@@ -143,15 +143,15 @@ use elain::{Align, Alignment};
 /// #    }
 /// }
 ///
-/// impl captree::Axis for HyperInt {
+/// impl capt::Axis for HyperInt {
 ///     const ZERO: Self = Self::Real(0);
 ///     const INFINITY: Self = Self::PlusInf;
 ///     const NEG_INFINITY: Self = Self::MinusInf;
-///     
+///
 ///     fn is_finite(self) -> bool {
 ///         matches!(self, Self::Real(_))
 ///     }
-///     
+///
 ///     fn in_between(self, rhs: Self) -> Self {
 ///         match (self, rhs) {
 ///             (Self::PlusInf, Self::MinusInf) | (Self::MinusInf, Self::PlusInf) => Self::Real(0),
@@ -363,7 +363,7 @@ where
 /// let points = [[0.0, 0.1], [0.4, -0.2], [-0.2, -0.1]];
 ///
 /// // query radii must be between 0.0 and 0.2
-/// let t = captree::Capt::<2>::new(&points, (0.0, 0.2));
+/// let t = capt::Capt::<2>::new(&points, (0.0, 0.2));
 ///
 /// assert!(!t.collides(&[0.0, 0.3], 0.1));
 /// assert!(t.collides(&[0.0, 0.2], 0.15));
@@ -437,7 +437,7 @@ where
     /// ```
     /// let points = [[0.0]];
     ///
-    /// let capt = captree::Capt::<1>::new(&points, (0.0, f32::INFINITY));
+    /// let capt = capt::Capt::<1>::new(&points, (0.0, f32::INFINITY));
     ///
     /// assert!(capt.collides(&[1.0], 1.5));
     /// assert!(!capt.collides(&[1.0], 0.5));
@@ -449,7 +449,7 @@ where
     /// let points = [[0.0]; 256];
     ///
     /// // note that we are using `u8` as our index type
-    /// let capt = captree::Capt::<1, 8, f32, u8>::new(&points, (0.0, f32::INFINITY));
+    /// let capt = capt::Capt::<1, 8, f32, u8>::new(&points, (0.0, f32::INFINITY));
     /// ```
     pub fn new(points: &[[A; K]], r_range: (A, A)) -> Self {
         Self::try_new(points, r_range)
@@ -475,7 +475,7 @@ where
     /// ```
     /// let points = [[0.0]];
     ///
-    /// let capt = captree::Capt::<1>::try_new(&points, (0.0, f32::INFINITY)).unwrap();
+    /// let capt = capt::Capt::<1>::try_new(&points, (0.0, f32::INFINITY)).unwrap();
     /// ```
     ///
     /// In failure, we get an `Err`.
@@ -484,7 +484,7 @@ where
     /// let points = [[0.0]; 256];
     ///
     /// // note that we are using `u8` as our index type
-    /// let opt = captree::Capt::<1, 8, f32, u8>::try_new(&points, (0.0, f32::INFINITY));
+    /// let opt = capt::Capt::<1, 8, f32, u8>::try_new(&points, (0.0, f32::INFINITY));
     ///
     /// assert!(opt.is_err());
     /// ```
@@ -697,7 +697,7 @@ where
     ///
     /// ```
     /// let points = [[0.0; 3], [1.0; 3], [0.1, 0.5, 1.0]];
-    /// let capt = captree::Capt::<3>::new(&points, (0.0, 1.0));
+    /// let capt = capt::Capt::<3>::new(&points, (0.0, 1.0));
     ///
     /// assert!(capt.collides(&[1.1; 3], 0.2));
     /// assert!(!capt.collides(&[2.0; 3], 1.0));
@@ -793,7 +793,7 @@ where
     /// ];
     /// let radii = Simd::splat(0.05);
     ///
-    /// let tree = captree::Capt::<2, 4, f32, u32>::new(&points, (0.0, 0.1));
+    /// let tree = capt::Capt::<2, 4, f32, u32>::new(&points, (0.0, 0.1));
     ///
     /// println!("{tree:?}");
     ///

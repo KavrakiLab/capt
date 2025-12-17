@@ -9,7 +9,7 @@ use bench::{
     forest::PkdForest, fuzz_pointcloud, kdt::PkdTree, parse_pointcloud_csv, parse_trace_csv,
     simd_trace_new, stopwatch, SimdTrace, Trace,
 };
-use captree::Capt;
+use capt::Capt;
 #[allow(unused_imports)]
 use kiddo::SquaredEuclidean;
 use morton_filter::morton_filter;

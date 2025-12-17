@@ -3,7 +3,7 @@
 use std::simd::Simd;
 
 use bench::{dist, kdt::PkdTree, parse_pointcloud_csv, parse_trace_csv, trace_r_range};
-use captree::Capt;
+use capt::Capt;
 use kiddo::SquaredEuclidean;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 

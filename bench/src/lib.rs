@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use captree::Axis;
+use capt::Axis;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 

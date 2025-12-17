@@ -1,9 +1,9 @@
 [package]
-name = "captree"
+name = "capt"
 version = "0.1.0"
 edition = "2021"
 description = "SIMD-accelerated nearest-neighbors for point cloud collision checking"
-repository = "https://github.com/KavrakiLab/captree-rs"
+repository = "https://github.com/KavrakiLab/capt"
 license = "PolyForm-Noncommercial-1.0.0"
 readme = "../README.md"
 keywords = [
