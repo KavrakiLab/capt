@@ -66,7 +66,7 @@
 //!
 //! ## License
 //!
-//! This work is licensed to you under the Polyform Non-Commercial License.
+//! This work is licensed to you under the Apache 2.0 license.
 #![cfg_attr(feature = "simd", feature(portable_simd))]
 #![cfg_attr(not(test), no_std)]
 #![warn(clippy::pedantic, clippy::cargo, clippy::nursery, missing_docs)]

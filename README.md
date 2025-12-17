@@ -28,7 +28,7 @@ If you use this in an academic work, please cite it as follows:
 The core data structure in this library is the `Capt`, which is a search tree used for collision checking.
 
 ```rust
-use captree::Capt;
+use capt::Capt;
 
 // list of points in tree
 let points = [[1.0, 1.0], [2.0, 1.0], [3.0, -1.0]];
@@ -47,5 +47,5 @@ assert!(captree.collides(&[1.5, 1.5], 0.01));
 
 ## License
 
-This work is licensed to you under the Polyform Non-Commercial License.
+This work is licensed to you under the Apache 2.0 license.
 For further details, refer to [LICENSE.md](/LICENSE.md).

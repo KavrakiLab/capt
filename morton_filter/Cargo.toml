@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Space-filling curve computations for point cloud filtering"
 repository = "https://github.com/KavrakiLab/captree-rs"
-license = "PolyForm-Noncommercial-1.0.0"
+license = "Apache-2.0"
 readme = "../README.md"
 keywords = [
     "robotics",
