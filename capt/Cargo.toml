@@ -1,7 +1,7 @@
 [package]
 name = "capt"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "SIMD-accelerated nearest-neighbors for point cloud collision checking"
 repository = "https://github.com/KavrakiLab/capt"
 license = "Apache-2.0"

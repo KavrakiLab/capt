@@ -274,7 +274,7 @@ macro_rules! impl_idx {
             where
                 LaneCount<L>: SupportedLaneCount,
             {
-                x.to_array().map(|a| a.try_into().unwrap_unchecked()).into()
+                unsafe { x.to_array().map(|a| a.try_into().unwrap_unchecked()).into() }
             }
         }
     };
@@ -632,136 +632,138 @@ where
         in_range: Vec<[A; K]>,
         cell: Aabb<A, K>,
     ) -> Result<(), NewCaptError> {
-        let rsq_min = r_range.0.square();
-        if let [rep] = *points {
-            let z = i - tests.len();
-            let aabb = &mut aabbs[z];
-            *aabb = Aabb { lo: rep, hi: rep };
-            if rep[0].is_finite() {
-                // lanes for afforded points
-                let mut news = [[A::INFINITY; L]; K];
-                for k in 0..K {
-                    news[k][0] = rep[k];
-                }
-
-                // index into the current lane
-                let mut j = 1;
-
-                // populate affordance buffer if the representative doesn't cover everything
-                if !cell.contained_by_ball(&rep, rsq_min) {
-                    for ak in afforded.iter_mut() {
-                        ak.reserve(ak.len() + in_range.len() / L);
+        unsafe {
+            let rsq_min = r_range.0.square();
+            if let [rep] = *points {
+                let z = i - tests.len();
+                let aabb = &mut aabbs[z];
+                *aabb = Aabb { lo: rep, hi: rep };
+                if rep[0].is_finite() {
+                    // lanes for afforded points
+                    let mut news = [[A::INFINITY; L]; K];
+                    for k in 0..K {
+                        news[k][0] = rep[k];
                     }
-                    for p in in_range {
-                        aabb.insert(&p);
 
-                        // start a new lane if it's full
-                        if j == L {
-                            for k in 0..K {
-                                afforded[k].push(MySimd {
-                                    data: news[k],
-                                    _align: Align::NEW,
-                                });
+                    // index into the current lane
+                    let mut j = 1;
+
+                    // populate affordance buffer if the representative doesn't cover everything
+                    if !cell.contained_by_ball(&rep, rsq_min) {
+                        for ak in afforded.iter_mut() {
+                            ak.reserve(ak.len() + in_range.len() / L);
+                        }
+                        for p in in_range {
+                            aabb.insert(&p);
+
+                            // start a new lane if it's full
+                            if j == L {
+                                for k in 0..K {
+                                    afforded[k].push(MySimd {
+                                        data: news[k],
+                                        _align: Align::NEW,
+                                    });
+                                }
+                                j = 0;
                             }
-                            j = 0;
-                        }
 
-                        // add this point to the lane
-                        for k in 0..K {
-                            news[k][j] = p[k];
-                        }
+                            // add this point to the lane
+                            for k in 0..K {
+                                news[k][j] = p[k];
+                            }
 
-                        j += 1;
+                            j += 1;
+                        }
+                    }
+
+                    // fill out the last lane with infinities
+                    for k in 0..K {
+                        afforded[k].push(MySimd {
+                            data: news[k],
+                            _align: Align::NEW,
+                        });
                     }
                 }
 
-                // fill out the last lane with infinities
-                for k in 0..K {
-                    afforded[k].push(MySimd {
-                        data: news[k],
-                        _align: Align::NEW,
-                    });
+                starts[z + 1] = afforded[0]
+                    .len()
+                    .try_into()
+                    .map_err(|_| NewCaptError::TooManyPoints)?;
+                return Ok(());
+            }
+
+            let test = median_partition(points, k);
+            tests[i] = test;
+
+            let (lhs, rhs) = points.split_at_mut(points.len() / 2);
+            let (lo_vol, hi_vol) = cell.split(test, k);
+
+            let lo_too_small = distsq(lo_vol.lo, lo_vol.hi) <= rsq_min;
+            let hi_too_small = distsq(hi_vol.lo, hi_vol.hi) <= rsq_min;
+
+            // retain only points which might be in the affordance buffer for the split-out cells
+            let (lo_afford, hi_afford) = match (lo_too_small, hi_too_small) {
+                (false, false) => {
+                    let mut lo_afford = in_range;
+                    let mut hi_afford = lo_afford.clone();
+                    lo_afford.retain(|pt| pt[k] <= test + r_range.1);
+                    lo_afford.extend(rhs.iter().filter(|pt| pt[k] <= test + r_range.1));
+                    hi_afford.retain(|pt| pt[k].is_finite() && test - r_range.1 <= pt[k]);
+                    hi_afford.extend(
+                        lhs.iter()
+                            .filter(|pt| pt[k].is_finite() && test - r_range.1 <= pt[k]),
+                    );
+
+                    (lo_afford, hi_afford)
                 }
-            }
+                (false, true) => {
+                    let mut lo_afford = in_range;
+                    lo_afford.retain(|pt| pt[k] <= test + r_range.1);
+                    lo_afford.extend(rhs.iter().filter(|pt| pt[k] <= test + r_range.1));
 
-            starts[z + 1] = afforded[0]
-                .len()
-                .try_into()
-                .map_err(|_| NewCaptError::TooManyPoints)?;
-            return Ok(());
+                    (lo_afford, Vec::new())
+                }
+                (true, false) => {
+                    let mut hi_afford = in_range;
+                    hi_afford.retain(|pt| test - r_range.1 <= pt[k]);
+                    hi_afford.extend(
+                        lhs.iter()
+                            .filter(|pt| pt[k].is_finite() && test - r_range.1 <= pt[k]),
+                    );
+
+                    (Vec::new(), hi_afford)
+                }
+                (true, true) => (Vec::new(), Vec::new()),
+            };
+
+            let next_k = (k + 1) % K;
+            Self::new_help(
+                lhs,
+                tests,
+                aabbs,
+                afforded,
+                starts,
+                next_k,
+                2 * i + 1,
+                r_range,
+                lo_afford,
+                lo_vol,
+            )?;
+            Self::new_help(
+                rhs,
+                tests,
+                aabbs,
+                afforded,
+                starts,
+                next_k,
+                2 * i + 2,
+                r_range,
+                hi_afford,
+                hi_vol,
+            )?;
+
+            Ok(())
         }
-
-        let test = median_partition(points, k);
-        tests[i] = test;
-
-        let (lhs, rhs) = points.split_at_mut(points.len() / 2);
-        let (lo_vol, hi_vol) = cell.split(test, k);
-
-        let lo_too_small = distsq(lo_vol.lo, lo_vol.hi) <= rsq_min;
-        let hi_too_small = distsq(hi_vol.lo, hi_vol.hi) <= rsq_min;
-
-        // retain only points which might be in the affordance buffer for the split-out cells
-        let (lo_afford, hi_afford) = match (lo_too_small, hi_too_small) {
-            (false, false) => {
-                let mut lo_afford = in_range;
-                let mut hi_afford = lo_afford.clone();
-                lo_afford.retain(|pt| pt[k] <= test + r_range.1);
-                lo_afford.extend(rhs.iter().filter(|pt| pt[k] <= test + r_range.1));
-                hi_afford.retain(|pt| pt[k].is_finite() && test - r_range.1 <= pt[k]);
-                hi_afford.extend(
-                    lhs.iter()
-                        .filter(|pt| pt[k].is_finite() && test - r_range.1 <= pt[k]),
-                );
-
-                (lo_afford, hi_afford)
-            }
-            (false, true) => {
-                let mut lo_afford = in_range;
-                lo_afford.retain(|pt| pt[k] <= test + r_range.1);
-                lo_afford.extend(rhs.iter().filter(|pt| pt[k] <= test + r_range.1));
-
-                (lo_afford, Vec::new())
-            }
-            (true, false) => {
-                let mut hi_afford = in_range;
-                hi_afford.retain(|pt| test - r_range.1 <= pt[k]);
-                hi_afford.extend(
-                    lhs.iter()
-                        .filter(|pt| pt[k].is_finite() && test - r_range.1 <= pt[k]),
-                );
-
-                (Vec::new(), hi_afford)
-            }
-            (true, true) => (Vec::new(), Vec::new()),
-        };
-
-        let next_k = (k + 1) % K;
-        Self::new_help(
-            lhs,
-            tests,
-            aabbs,
-            afforded,
-            starts,
-            next_k,
-            2 * i + 1,
-            r_range,
-            lo_afford,
-            lo_vol,
-        )?;
-        Self::new_help(
-            rhs,
-            tests,
-            aabbs,
-            afforded,
-            starts,
-            next_k,
-            2 * i + 2,
-            r_range,
-            hi_afford,
-            hi_vol,
-        )?;
-
-        Ok(())
     }
 
     #[must_use]
@@ -1029,15 +1031,17 @@ where
 ///
 /// This function will result in undefined behavior if `points` contains any `NaN` values.
 unsafe fn median_partition<A: Axis, const K: usize>(points: &mut [[A; K]], k: usize) -> A {
-    let (lh, med_hi, _) = points.select_nth_unstable_by(points.len() / 2, |a, b| {
-        a[k].partial_cmp(&b[k]).unwrap_unchecked()
-    });
-    let med_lo = lh
-        .iter_mut()
-        .map(|p| p[k])
-        .max_by(|a, b| a.partial_cmp(b).unwrap_unchecked())
-        .unwrap();
-    A::in_between(med_lo, med_hi[k])
+    unsafe {
+        let (lh, med_hi, _) = points.select_nth_unstable_by(points.len() / 2, |a, b| {
+            a[k].partial_cmp(&b[k]).unwrap_unchecked()
+        });
+        let med_lo = lh
+            .iter_mut()
+            .map(|p| p[k])
+            .max_by(|a, b| a.partial_cmp(b).unwrap_unchecked())
+            .unwrap();
+        A::in_between(med_lo, med_hi[k])
+    }
 }
 
 #[cfg(test)]
