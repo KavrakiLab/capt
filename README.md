@@ -2,6 +2,7 @@
 
 [![arXiv CAPT](https://img.shields.io/badge/arXiv-2406.02807-b31b1b.svg)](https://arxiv.org/abs/2406.02807)
 [![Crates.io page](https://img.shields.io/crates/v/capt)](https://crates.io/crates/capt)
+[![docs.rs](https://img.shields.io/docsrs/capt)](https://docs.rs/capt)
 
 ![Demo video](doc/capt_demo.gif)
 
@@ -50,6 +51,21 @@ assert!(!captree.collides(&[1.5, 1.5], 0.01));
 
 // sphere centered at (1.5, 1.5) with radius 1.0 does collide
 assert!(captree.collides(&[1.5, 1.5], 0.01));
+```
+
+## Installation
+
+`capt` is available as a package on [crates.io](https://crates.io/crate/capt).
+This means that adding `capt` to your Rust project is as simple as asking Cargo to add it as a dependency.
+
+```sh
+cargo add capt
+```
+
+To use the SIMD-parallel features of CAPTs, make sure to include it as a feature.
+
+```sh
+cargo add capt --features simd
 ```
 
 ## License
