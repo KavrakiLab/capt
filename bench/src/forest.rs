@@ -1,8 +1,6 @@
 //! Power-of-two k-d forests.
 
-use std::simd::{
-    cmp::SimdPartialOrd, ptr::SimdConstPtr, LaneCount, Mask, Simd, SupportedLaneCount,
-};
+use std::simd::{cmp::SimdPartialOrd, ptr::SimdConstPtr, Mask, Simd};
 
 use crate::{distsq, median_partition};
 
@@ -59,10 +57,7 @@ impl<const K: usize, const T: usize> PkdForest<K, T> {
         &self,
         needles: &[Simd<f32, L>; K],
         radii_squared: Simd<f32, L>,
-    ) -> bool
-    where
-        LaneCount<L>: SupportedLaneCount,
-    {
+    ) -> bool {
         let mut not_yet_collided = Mask::splat(true);
 
         for tree in &self.test_seqs {
@@ -157,10 +152,7 @@ impl<const K: usize> RandomizedTree<K> {
         &self,
         needles: &[Simd<f32, L>; K],
         mask: Mask<isize, L>,
-    ) -> Simd<isize, L>
-    where
-        LaneCount<L>: SupportedLaneCount,
-    {
+    ) -> Simd<isize, L> {
         let mut test_idxs: Simd<isize, L> = Simd::splat(0);
         let mut state = self.seed;
 
@@ -179,7 +171,7 @@ impl<const K: usize> RandomizedTree<K> {
             // TODO is there a faster way than using a conditional select?
             test_idxs <<= Simd::splat(1);
             test_idxs += Simd::splat(1);
-            test_idxs += cmp_results.to_int() & Simd::splat(1);
+            test_idxs += cmp_results.to_simd() & Simd::splat(1);
             state = xorshift(state);
         }
 

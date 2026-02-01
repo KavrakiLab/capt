@@ -1,9 +1,6 @@
 use std::{
     mem::size_of,
-    simd::{
-        cmp::SimdPartialOrd, num::SimdInt, ptr::SimdConstPtr, LaneCount, Mask, Simd,
-        SupportedLaneCount,
-    },
+    simd::{cmp::SimdPartialOrd, num::SimdInt, ptr::SimdConstPtr, Mask, Simd},
 };
 
 use crate::{distsq, forward_pass, median_partition};
@@ -89,10 +86,7 @@ impl<const K: usize> PkdTree<K> {
         &self,
         needles: &[Simd<f32, L>; K],
         radii_squared: Simd<f32, L>,
-    ) -> bool
-    where
-        LaneCount<L>: SupportedLaneCount,
-    {
+    ) -> bool {
         let indices = forward_pass_simd(&self.tests, needles);
         let mut dists_squared = Simd::splat(0.0);
         let mut ptrs =
@@ -217,7 +211,6 @@ fn forward_pass_simd<A, const K: usize, const L: usize>(
 where
     Simd<A, L>: AxisSimd<L>,
     A: AxisSimdElement,
-    LaneCount<L>: SupportedLaneCount,
 {
     let mut i: Simd<usize, L> = Simd::splat(0);
     let mut k = 0;
@@ -227,7 +220,7 @@ where
         let cmp: Mask<isize, L> = Simd::<A, L>::cast_mask(centers[k].simd_ge(relevant_tests));
 
         let one = Simd::splat(1);
-        i = (i << one) + one + (cmp.to_int().cast() & one);
+        i = (i << one) + one + (cmp.to_simd().cast() & one);
         k = (k + 1) % K;
     }
 

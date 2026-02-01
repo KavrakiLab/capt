@@ -86,7 +86,7 @@ use core::{
     ops::{AddAssign, Mul, SubAssign},
     ptr,
     simd::{
-        LaneCount, Mask, Simd, SimdElement, SupportedLaneCount,
+        Mask, Simd, SimdElement,
         cmp::{SimdPartialEq, SimdPartialOrd},
         ptr::SimdConstPtr,
     },
@@ -209,8 +209,6 @@ pub trait AxisSimd<const L: usize>:
     + Sub<Output = Self>
     + SubAssign
     + Mul<Output = Self>
-where
-    LaneCount<L>: SupportedLaneCount,
 {
     /// Cast a mask for a SIMD vector into a mask of `isize`s.
     fn cast_mask(mask: <Self as SimdPartialEq>::Mask) -> Mask<isize, L>;
@@ -241,9 +239,7 @@ pub trait IndexSimd: SimdElement + Default {
     /// # Safety
     ///
     /// This function is only safe if all values of `x` are valid when converted to a `usize`.
-    unsafe fn to_simd_usize_unchecked<const L: usize>(x: Simd<Self, L>) -> Simd<usize, L>
-    where
-        LaneCount<L>: SupportedLaneCount;
+    unsafe fn to_simd_usize_unchecked<const L: usize>(x: Simd<Self, L>) -> Simd<usize, L>;
 }
 
 macro_rules! impl_axis {
@@ -269,10 +265,7 @@ macro_rules! impl_axis {
         impl AxisSimdElement for $t {}
 
         #[cfg(feature = "simd")]
-        impl<const L: usize> AxisSimd<L> for Simd<$t, L>
-        where
-            LaneCount<L>: SupportedLaneCount,
-        {
+        impl<const L: usize> AxisSimd<L> for Simd<$t, L> {
             fn cast_mask(mask: <Self as SimdPartialEq>::Mask) -> Mask<isize, L> {
                 mask.into()
             }
@@ -291,10 +284,7 @@ macro_rules! impl_idx {
 
         #[cfg(feature = "simd")]
         impl IndexSimd for $t {
-            unsafe fn to_simd_usize_unchecked<const L: usize>(x: Simd<Self, L>) -> Simd<usize, L>
-            where
-                LaneCount<L>: SupportedLaneCount,
-            {
+            unsafe fn to_simd_usize_unchecked<const L: usize>(x: Simd<Self, L>) -> Simd<usize, L> {
                 unsafe { x.to_array().map(|a| a.try_into().unwrap_unchecked()).into() }
             }
         }
@@ -331,7 +321,6 @@ fn forward_pass_simd<A, const K: usize, const L: usize>(
 where
     Simd<A, L>: AxisSimd<L>,
     A: AxisSimdElement,
-    LaneCount<L>: SupportedLaneCount,
 {
     let mut test_idxs: Simd<isize, L> = Simd::splat(0);
     let mut k = 0;
@@ -342,7 +331,7 @@ where
             Simd::<A, L>::cast_mask(centers[k % K].simd_ge(relevant_tests));
 
         let one = Simd::splat(1);
-        test_idxs = (test_idxs << one) + one + (cmp_results.to_int() & Simd::splat(1));
+        test_idxs = (test_idxs << one) + one + (cmp_results.to_simd() & Simd::splat(1));
         k = (k + 1) % K;
     }
 
@@ -904,7 +893,6 @@ where
     /// ```
     pub fn collides_simd(&self, centers: &[Simd<A, L>; K], mut radii: Simd<A, L>) -> bool
     where
-        LaneCount<L>: SupportedLaneCount,
         Simd<A, L>: AxisSimd<L>,
         A: AxisSimdElement,
     {

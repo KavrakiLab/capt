@@ -1,7 +1,5 @@
 #![feature(portable_simd)]
 
-use std::simd::{LaneCount, SupportedLaneCount};
-
 use bench::{dist, fuzz_pointcloud, get_points, kdt::PkdTree, make_needles};
 use kiddo::SquaredEuclidean;
 use rand::{Rng, SeedableRng};
@@ -22,16 +20,14 @@ pub fn measure_error<const D: usize, const L: usize>(
     points: &[[f32; D]],
     rng: &mut impl Rng,
     n_trials: usize,
-) where
-    LaneCount<L>: SupportedLaneCount,
-{
+) {
     let kdt = PkdTree::new(points);
     let mut kiddo_kdt = kiddo::KdTree::new();
     for pt in points.iter() {
         kiddo_kdt.add(pt, 0);
     }
 
-    let (seq_needles, _) = make_needles(rng, n_trials);
+    let (seq_needles, _) = make_needles::<D, L>(rng, n_trials);
 
     for seq_needle in seq_needles {
         let exact_kiddo_dist = kiddo_kdt

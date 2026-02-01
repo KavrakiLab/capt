@@ -4,7 +4,7 @@ use std::{
     env,
     error::Error,
     path::Path,
-    simd::{LaneCount, Simd, SupportedLaneCount},
+    simd::Simd,
     time::{Duration, Instant},
 };
 
@@ -53,10 +53,7 @@ pub fn get_points(n_points_if_no_cloud: usize) -> Box<[[f32; 3]]> {
 pub fn make_needles<const D: usize, const L: usize>(
     rng: &mut impl Rng,
     n_trials: usize,
-) -> (Vec<[f32; D]>, Vec<[Simd<f32, L>; D]>)
-where
-    LaneCount<L>: SupportedLaneCount,
-{
+) -> (Vec<[f32; D]>, Vec<[Simd<f32, L>; D]>) {
     let mut seq_needles = Vec::new();
     let mut simd_needles = Vec::new();
 
@@ -95,10 +92,7 @@ where
 pub fn make_correlated_needles<const D: usize, const L: usize>(
     rng: &mut impl Rng,
     n_trials: usize,
-) -> (Vec<[f32; D]>, Vec<[Simd<f32, L>; D]>)
-where
-    LaneCount<L>: SupportedLaneCount,
-{
+) -> (Vec<[f32; D]>, Vec<[Simd<f32, L>; D]>) {
     let mut seq_needles = Vec::new();
     let mut simd_needles = Vec::new();
 
@@ -176,10 +170,7 @@ pub fn parse_trace_csv(p: impl AsRef<Path>) -> Result<Box<Trace>, Box<dyn std::e
 
 pub type SimdTrace<const L: usize> = [([Simd<f32, L>; 3], Simd<f32, L>)];
 
-pub fn simd_trace_new<const L: usize>(trace: &Trace) -> Box<SimdTrace<L>>
-where
-    LaneCount<L>: SupportedLaneCount,
-{
+pub fn simd_trace_new<const L: usize>(trace: &Trace) -> Box<SimdTrace<L>> {
     trace
         .chunks(L)
         .map(|w| {
