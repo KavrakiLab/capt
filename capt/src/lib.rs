@@ -72,10 +72,13 @@
 #![warn(clippy::pedantic, clippy::cargo, clippy::nursery, missing_docs)]
 
 extern crate alloc;
+use aligned_vec::{ABox, AVec, RuntimeAlign};
 use alloc::{boxed::Box, vec, vec::Vec};
 
 use core::{
+    alloc::Layout,
     array,
+    cmp::max,
     fmt::Debug,
     mem::size_of,
     ops::{Add, Sub},
@@ -84,15 +87,12 @@ use core::{
 #[cfg(feature = "simd")]
 use core::{
     ops::{AddAssign, Mul, SubAssign},
-    ptr,
     simd::{
         Mask, Simd, SimdElement,
         cmp::{SimdPartialEq, SimdPartialOrd},
         ptr::SimdConstPtr,
     },
 };
-
-use elain::{Align, Alignment};
 
 /// A generic trait representing values which may be used as an "axis;" that is, elements of a
 /// vector representing a point.
@@ -338,18 +338,6 @@ where
     test_idxs - Simd::splat(tests.len() as isize)
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// A stable-safe wrapper for `[A; L]` which is aligned to `L`.
-/// Equivalent to a `Simd`, but easier to work with.
-struct MySimd<A, const L: usize>
-where
-    Align<L>: Alignment,
-{
-    data: [A; L],
-    _align: Align<L>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::module_name_repetitions)]
 /// A collision-affording point tree (CAPT), which allows for efficient collision-checking in a
@@ -378,10 +366,7 @@ where
 /// assert!(!t.collides(&[0.0, 0.3], 0.1));
 /// assert!(t.collides(&[0.0, 0.2], 0.15));
 /// ```
-pub struct Capt<const K: usize, const L: usize = 8, A = f32, I = usize>
-where
-    Align<L>: Alignment,
-{
+pub struct Capt<const K: usize, A = f32, I = usize> {
     /// The test values for determining which part of the tree to enter.
     ///
     /// The first element of `tests` should be the first value to test against.
@@ -399,8 +384,10 @@ where
     /// for the sake of branchless computation.
     starts: Box<[I]>,
     /// The sets of afforded points for each cell.
-    afforded: [Box<[MySimd<A, L>]>; K],
+    afforded: [ABox<[A], RuntimeAlign>; K],
     r_point: A,
+    /// Log-base-2 of the number of lanes in this tree.
+    lanes_log2: u32,
 }
 
 #[repr(C)]
@@ -423,18 +410,21 @@ pub enum NewCaptError {
     TooManyPoints,
     /// At least one of the points had a non-finite value.
     NonFinite,
+    /// The CAPT was constructed with a non-power-of-two lane count.
+    InvalidLaneCount,
 }
 
-impl<A, I, const K: usize, const L: usize> Capt<K, L, A, I>
+impl<A, I, const K: usize> Capt<K, A, I>
 where
     A: Axis,
     I: Index,
-    Align<L>: Alignment,
 {
     /// Construct a new CAPT containing all the points in `points`.
     ///
     /// `r_range` is a `(minimum, maximum)` pair containing the lower and upper bound on the
     /// radius of the balls which will be queried against the tree.
+    /// `n_lanes` is the number of SIMD lanes to be used by this tree, and may be 1 for
+    /// single-element batch requests.
     ///
     /// # Panics
     ///
@@ -462,8 +452,8 @@ where
     /// // note that we are using `u8` as our index type
     /// let capt = capt::Capt::<1, 8, f32, u8>::new(&points, (0.0, f32::INFINITY));
     /// ```
-    pub fn new(points: &[[A; K]], r_range: (A, A)) -> Self {
-        Self::try_new(points, r_range)
+    pub fn new(points: &[[A; K]], r_range: (A, A), n_lanes: usize) -> Self {
+        Self::try_new(points, r_range, n_lanes)
             .expect("index type I must be able to support all points in CAPT during construction")
     }
 
@@ -471,6 +461,8 @@ where
     ///
     /// `r_range` is a `(minimum, maximum)` pair containing the lower and upper bound on the
     /// radius of the balls which will be queried against the tree.
+    /// `n_lanes` is the number of SIMD lanes to be used by this tree, and may be 1 for
+    /// single-element batch requests.
     ///
     /// # Panics
     ///
@@ -498,8 +490,13 @@ where
     /// // note that we are using `u8` as our index type
     /// let capt = capt::Capt::<1, 8, f32, u8>::with_point_radius(&points, (0.0, f32::INFINITY), 0.2);
     /// ```
-    pub fn with_point_radius(points: &[[A; K]], r_range: (A, A), r_point: A) -> Self {
-        Self::try_with_point_radius(points, r_range, r_point)
+    pub fn with_point_radius(
+        points: &[[A; K]],
+        r_range: (A, A),
+        r_point: A,
+        n_lanes: usize,
+    ) -> Self {
+        Self::try_with_point_radius(points, r_range, r_point, n_lanes)
             .expect("index type I must be able to support all points in CAPT during construction")
     }
 
@@ -507,6 +504,8 @@ where
     ///
     /// `r_range` is a `(minimum, maximum)` pair containing the lower and upper bound on the
     /// radius of the balls which will be queried against the tree.
+    /// `n_lanes` is the number of SIMD lanes to be used by this tree, and may be 1 for
+    /// single-element batch requests.
     ///
     /// # Errors
     ///
@@ -534,8 +533,12 @@ where
     ///
     /// assert!(opt.is_err());
     /// ```
-    pub fn try_new(points: &[[A; K]], r_range: (A, A)) -> Result<Self, NewCaptError> {
-        Self::try_with_point_radius(points, r_range, A::ZERO)
+    pub fn try_new(
+        points: &[[A; K]],
+        r_range: (A, A),
+        n_lanes: usize,
+    ) -> Result<Self, NewCaptError> {
+        Self::try_with_point_radius(points, r_range, A::ZERO, n_lanes)
     }
 
     /// Construct a new CAPT containing all the points in `points` with a point radius `r_point`,
@@ -543,6 +546,8 @@ where
     ///
     /// `r_range` is a `(minimum, maximum)` pair containing the lower and upper bound on the
     /// radius of the balls which will be queried against the tree.
+    /// `n_lanes` is the number of SIMD lanes to be used by this tree, and may be 1 for
+    /// single-element batch requests.
     ///
     /// # Errors
     ///
@@ -576,8 +581,14 @@ where
         points: &[[A; K]],
         r_range: (A, A),
         r_point: A,
+        n_lanes: usize,
     ) -> Result<Self, NewCaptError> {
         let n2 = points.len().next_power_of_two();
+
+        if !n_lanes.is_power_of_two() {
+            return Err(NewCaptError::InvalidLaneCount);
+        }
+        let lanes_log2 = n_lanes.ilog2();
 
         if points.iter().any(|p| p.iter().any(|x| !x.is_finite())) {
             return Err(NewCaptError::NonFinite);
@@ -588,8 +599,11 @@ where
         // hack: just pad with infinity to make it a power of 2
         let mut points2 = vec![[A::INFINITY; K]; n2].into_boxed_slice();
         points2[..points.len()].copy_from_slice(points);
+
+        let layout = Layout::array::<A>(n_lanes).map_err(|_| NewCaptError::InvalidLaneCount)?;
+        let alignment = max(layout.size(), layout.align());
         // hack - reduce number of reallocations by allocating a lot of points from the start
-        let mut afforded = array::from_fn(|_| Vec::with_capacity(n2 * 100));
+        let mut afforded = array::from_fn(|_| AVec::with_capacity(alignment, n2 * 100));
         let mut starts = vec![I::ZERO; n2 + 1].into_boxed_slice();
 
         let mut aabbs = vec![
@@ -612,6 +626,7 @@ where
                 0,
                 0,
                 r_range,
+                lanes_log2,
                 Vec::new(),
                 Aabb::ALL,
             )?;
@@ -620,9 +635,10 @@ where
         Ok(Self {
             tests,
             starts,
-            afforded: afforded.map(Vec::into_boxed_slice),
+            afforded: afforded.map(AVec::into_boxed_slice),
             aabbs,
             r_point,
+            lanes_log2,
         })
     }
 
@@ -634,14 +650,16 @@ where
         points: &mut [[A; K]],
         tests: &mut [A],
         aabbs: &mut [Aabb<A, K>],
-        afforded: &mut [Vec<MySimd<A, L>>; K],
+        afforded: &mut [AVec<A, RuntimeAlign>; K],
         starts: &mut [I],
         k: usize,
         i: usize,
         r_range: (A, A),
+        lanes_log2: u32,
         in_range: Vec<[A; K]>,
         cell: Aabb<A, K>,
     ) -> Result<(), NewCaptError> {
+        let lanes_mask = (1 << lanes_log2) - 1;
         unsafe {
             let rsq_min = r_range.0.square();
             if let [rep] = *points {
@@ -650,48 +668,37 @@ where
                 *aabb = Aabb { lo: rep, hi: rep };
                 if rep[0].is_finite() {
                     // lanes for afforded points
-                    let mut news = [[A::INFINITY; L]; K];
                     for k in 0..K {
-                        news[k][0] = rep[k];
+                        afforded[k].push(rep[k]);
                     }
-
-                    // index into the current lane
-                    let mut j = 1;
+                    let mut n_points_added = 1;
 
                     // populate affordance buffer if the representative doesn't cover everything
                     if !cell.contained_by_ball(&rep, rsq_min) {
                         for ak in afforded.iter_mut() {
-                            ak.reserve(ak.len() + in_range.len() / L);
+                            ak.reserve(ak.len() + in_range.len());
                         }
                         for p in in_range {
                             aabb.insert(&p);
 
-                            // start a new lane if it's full
-                            if j == L {
-                                for k in 0..K {
-                                    afforded[k].push(MySimd {
-                                        data: news[k],
-                                        _align: Align::NEW,
-                                    });
-                                }
-                                j = 0;
-                            }
-
                             // add this point to the lane
                             for k in 0..K {
-                                news[k][j] = p[k];
+                                afforded[k].push(p[k]);
                             }
-
-                            j += 1;
+                            n_points_added += 1;
                         }
                     }
+                    // fill out the last block with infinities
+                    while n_points_added & lanes_mask != 0 {
+                        for aff in afforded.iter_mut() {
+                            aff.push(A::INFINITY);
+                        }
+                        n_points_added += 1;
+                    }
 
-                    // fill out the last lane with infinities
-                    for k in 0..K {
-                        afforded[k].push(MySimd {
-                            data: news[k],
-                            _align: Align::NEW,
-                        });
+                    assert!(afforded[0].len() & lanes_mask == 0);
+                    for k in 0..(K - 1) {
+                        assert_eq!(afforded[k].len(), afforded[k + 1].len());
                     }
                 }
 
@@ -699,6 +706,13 @@ where
                     .len()
                     .try_into()
                     .map_err(|_| NewCaptError::TooManyPoints)?;
+                let is_misaligned = (starts[z + 1])
+                    .try_into()
+                    .is_ok_and(|start| (start & lanes_mask) != 0);
+                assert!(
+                    !is_misaligned,
+                    "start indices for affordance bufs must be aligned"
+                );
                 return Ok(());
             }
 
@@ -756,6 +770,7 @@ where
                 next_k,
                 2 * i + 1,
                 r_range,
+                lanes_log2,
                 lo_afford,
                 lo_vol,
             )?;
@@ -768,6 +783,7 @@ where
                 next_k,
                 2 * i + 2,
                 r_range,
+                lanes_log2,
                 hi_afford,
                 hi_vol,
             )?;
@@ -827,13 +843,8 @@ where
 
         // check affordance buffer
         range.any(|i| {
-            (0..L).any(|j| {
-                let mut aff_pt = [A::INFINITY; K];
-                for (ak, sk) in aff_pt.iter_mut().zip(&self.afforded) {
-                    *ak = sk[i].data[j];
-                }
-                distsq(aff_pt, *center) <= rsq
-            })
+            let aff_pt = array::from_fn(|k| self.afforded[k][i]);
+            distsq(aff_pt, *center) <= rsq
         })
     }
 
@@ -841,9 +852,9 @@ where
     #[doc(hidden)]
     /// Get the total memory used (stack + heap) by this structure, measured in bytes.
     /// This function should not be considered stable; it is only used internally for benchmarks.
-    pub const fn memory_used(&self) -> usize {
+    pub fn memory_used(&self) -> usize {
         size_of::<Self>()
-            + K * self.afforded[0].len() * size_of::<A>()
+            + K * self.afforded.len() * size_of::<A>()
             + self.starts.len() * size_of::<I>()
             + self.tests.len() * size_of::<I>()
             + self.aabbs.len() * size_of::<Aabb<A, K>>()
@@ -861,15 +872,19 @@ where
 
 #[allow(clippy::mismatching_type_param_order)]
 #[cfg(feature = "simd")]
-impl<A, I, const K: usize, const L: usize> Capt<K, L, A, I>
+impl<A, I, const K: usize> Capt<K, A, I>
 where
     I: IndexSimd,
     A: Mul<Output = A>,
-    Align<L>: Alignment,
 {
     #[must_use]
     /// Determine whether any sphere in the list of provided spheres intersects a point in this
     /// tree.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the `Capt` was not constructed with a large enough lane count
+    /// for the query.
     ///
     /// # Examples
     ///
@@ -891,11 +906,20 @@ where
     ///
     /// assert!(tree.collides_simd(&centers, radii));
     /// ```
-    pub fn collides_simd(&self, centers: &[Simd<A, L>; K], mut radii: Simd<A, L>) -> bool
+    pub fn collides_simd<const L: usize>(
+        &self,
+        centers: &[Simd<A, L>; K],
+        mut radii: Simd<A, L>,
+    ) -> bool
     where
-        Simd<A, L>: AxisSimd<L>,
+        Simd<A, L>: AxisSimd<L> + Debug,
         A: AxisSimdElement,
     {
+        assert!(L.is_power_of_two(), "lane count must be power of two");
+        assert!(
+            1 << self.lanes_log2 >= L,
+            "lane count of query must be lower than lane count of CAPT"
+        );
         radii += Simd::splat(self.r_point);
         let zs = forward_pass_simd(&self.tests, centers);
 
@@ -945,13 +969,11 @@ where
                 }
                 let rs = Simd::splat(radii[j]);
                 let rs_sq = rs * rs;
-                (start..end).any(|i| {
+                (start..end).step_by(L).any(|i| {
                     let mut dists_sq = Simd::splat(A::ZERO);
                     #[allow(clippy::needless_range_loop)]
                     for k in 0..K {
-                        let vals: Simd<A, L> = unsafe {
-                            *ptr::from_ref(&self.afforded[k].get_unchecked(i).data).cast()
-                        };
+                        let vals: Simd<A, L> = unsafe { *self.afforded[k].as_ptr().add(i).cast() };
                         let diff = vals - n_center[k];
                         dists_sq += diff * diff;
                     }
@@ -1060,14 +1082,14 @@ mod tests {
     #[test]
     fn build_simple() {
         let points = [[0.0, 0.1], [0.4, -0.2], [-0.2, -0.1]];
-        let t = Capt::<2>::new(&points, (0.0, 0.2));
+        let t = Capt::<2>::new(&points, (0.0, 0.2), 1);
         println!("{t:?}");
     }
 
     #[test]
     fn exact_query_single() {
         let points = [[0.0, 0.1], [0.4, -0.2], [-0.2, -0.1]];
-        let t = Capt::<2>::new(&points, (0.0, 0.2));
+        let t = Capt::<2>::new(&points, (0.0, 0.2), 1);
 
         println!("{t:?}");
 
@@ -1078,7 +1100,7 @@ mod tests {
     #[test]
     fn another_one() {
         let points = [[0.0, 0.1], [0.4, -0.2], [-0.2, -0.1]];
-        let t = Capt::<2>::new(&points, (0.0, 0.2));
+        let t = Capt::<2>::new(&points, (0.0, 0.2), 1);
 
         println!("{t:?}");
 
@@ -1095,7 +1117,7 @@ mod tests {
             [0.1, -1.1, 0.5],
         ];
 
-        let t = Capt::<3>::new(&points, (0.0, 0.2));
+        let t = Capt::<3>::new(&points, (0.0, 0.2), 1);
 
         println!("{t:?}");
         assert!(t.collides(&[0.0, 0.1, 0.0], 0.11));
@@ -1107,7 +1129,7 @@ mod tests {
         const R: f32 = 0.04;
         let points = [[0.0, 0.1], [0.4, -0.2], [-0.2, -0.1]];
         let mut rng = SmallRng::seed_from_u64(1234);
-        let t = Capt::<2>::new(&points, (0.0, R));
+        let t = Capt::<2>::new(&points, (0.0, R), 1);
 
         for _ in 0..10_000 {
             let p = [rng.random_range(-1.0..1.0), rng.random_range(-1.0..1.0)];
@@ -1140,7 +1162,7 @@ mod tests {
             [7.0, 7.0],
         ];
         let rsq_range = (R_SQ - f32::EPSILON, R_SQ + f32::EPSILON);
-        let t = Capt::<2>::new(&points, rsq_range);
+        let t = Capt::<2>::new(&points, rsq_range, 1);
         println!("{t:?}");
 
         assert!(t.collides(&[-0.001, -0.2], 1.0));
@@ -1166,7 +1188,7 @@ mod tests {
         let points = [[0.0, 0.0], [0.0, 1.0]];
         let r_range = (0.0, 1.0);
 
-        let capt: Capt<_, 8, _, u32> = Capt::with_point_radius(&points, r_range, 0.5);
+        let capt: Capt<_, _, u32> = Capt::with_point_radius(&points, r_range, 0.5, 8);
         assert!(capt.collides(&[0.6, 0.0], 0.2));
         assert!(!capt.collides(&[0.6, 0.0], 0.05));
     }

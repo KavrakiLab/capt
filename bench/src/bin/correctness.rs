@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         kiddo_kdt.add(pt, 0);
     }
 
-    let aff_tree = Capt::<3>::new(&points, r_range);
+    let aff_tree = Capt::<3>::new(&points, r_range, 8);
 
     for (i, (center, r)) in trace.iter().enumerate() {
         let exact_kiddo_dist = kiddo_kdt
