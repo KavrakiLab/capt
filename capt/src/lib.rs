@@ -912,7 +912,7 @@ where
         mut radii: Simd<A, L>,
     ) -> bool
     where
-        Simd<A, L>: AxisSimd<L> + Debug,
+        Simd<A, L>: AxisSimd<L>,
         A: AxisSimdElement,
     {
         assert!(L.is_power_of_two(), "lane count must be power of two");
