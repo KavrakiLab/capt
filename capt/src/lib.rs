@@ -38,7 +38,7 @@
 //! let r_min = 0.05;
 //! let r_max = 2.0;
 //!
-//! let capt = Capt::<2>::new(&points, (r_min, r_max));
+//! let capt = Capt::<2>::new(&points, (r_min, r_max), 1);
 //! ```
 //!
 //! Once you have a `Capt`, you can use it for collision-checking against spheres.
@@ -48,7 +48,7 @@
 //! ```rust
 //! # use capt::Capt;
 //! # let points = [[0.0, 1.1], [0.2, 3.1]];
-//! # let capt = Capt::<2>::new(&points, (0.05, 2.0));
+//! # let capt = Capt::<2>::new(&points, (0.05, 2.0), 1);
 //! let center = [0.0, 0.0]; // center of sphere
 //! let radius0 = 1.0; // radius of sphere
 //! assert!(!capt.collides(&center, radius0));
@@ -361,7 +361,7 @@ where
 /// let points = [[0.0, 0.1], [0.4, -0.2], [-0.2, -0.1]];
 ///
 /// // query radii must be between 0.0 and 0.2
-/// let t = capt::Capt::<2>::new(&points, (0.0, 0.2));
+/// let t = capt::Capt::<2>::new(&points, (0.0, 0.2), 1);
 ///
 /// assert!(!t.collides(&[0.0, 0.3], 0.1));
 /// assert!(t.collides(&[0.0, 0.2], 0.15));
@@ -438,7 +438,7 @@ where
     /// ```
     /// let points = [[0.0]];
     ///
-    /// let capt = capt::Capt::<1>::new(&points, (0.0, f32::INFINITY));
+    /// let capt = capt::Capt::<1>::new(&points, (0.0, f32::INFINITY), 1);
     ///
     /// assert!(capt.collides(&[1.0], 1.5));
     /// assert!(!capt.collides(&[1.0], 0.5));
@@ -450,7 +450,7 @@ where
     /// let points = [[0.0]; 256];
     ///
     /// // note that we are using `u8` as our index type
-    /// let capt = capt::Capt::<1, 8, f32, u8>::new(&points, (0.0, f32::INFINITY));
+    /// let capt = capt::Capt::<1, f32, u8>::new(&points, (0.0, f32::INFINITY), 1);
     /// ```
     pub fn new(points: &[[A; K]], r_range: (A, A), n_lanes: usize) -> Self {
         Self::try_new(points, r_range, n_lanes)
@@ -476,7 +476,7 @@ where
     /// ```
     /// let points = [[0.0]];
     ///
-    /// let capt = capt::Capt::<1>::with_point_radius(&points, (0.0, f32::INFINITY), 0.2);
+    /// let capt = capt::Capt::<1>::with_point_radius(&points, (0.0, f32::INFINITY), 0.2, 1);
     ///
     /// assert!(capt.collides(&[1.0], 1.5));
     /// assert!(!capt.collides(&[1.0], 0.5));
@@ -488,7 +488,7 @@ where
     /// let points = [[0.0]; 256];
     ///
     /// // note that we are using `u8` as our index type
-    /// let capt = capt::Capt::<1, 8, f32, u8>::with_point_radius(&points, (0.0, f32::INFINITY), 0.2);
+    /// let capt = capt::Capt::<1, f32, u8>::with_point_radius(&points, (0.0, f32::INFINITY), 0.2, 1);
     /// ```
     pub fn with_point_radius(
         points: &[[A; K]],
@@ -520,7 +520,7 @@ where
     /// ```
     /// let points = [[0.0]];
     ///
-    /// let capt = capt::Capt::<1>::try_new(&points, (0.0, f32::INFINITY)).unwrap();
+    /// let capt = capt::Capt::<1>::try_new(&points, (0.0, f32::INFINITY), 1).unwrap();
     /// ```
     ///
     /// In failure, we get an `Err`.
@@ -529,7 +529,7 @@ where
     /// let points = [[0.0]; 256];
     ///
     /// // note that we are using `u8` as our index type
-    /// let opt = capt::Capt::<1, 8, f32, u8>::try_new(&points, (0.0, f32::INFINITY));
+    /// let opt = capt::Capt::<1, f32, u8>::try_new(&points, (0.0, f32::INFINITY), 8);
     ///
     /// assert!(opt.is_err());
     /// ```
@@ -563,7 +563,8 @@ where
     /// ```
     /// let points = [[0.0]];
     ///
-    /// let capt = capt::Capt::<1>::try_with_point_radius(&points, (0.0, f32::INFINITY), 0.01).unwrap();
+    /// let capt =
+    ///     capt::Capt::<1>::try_with_point_radius(&points, (0.0, f32::INFINITY), 0.01, 1).unwrap();
     /// ```
     ///
     /// In failure, we get an `Err`.
@@ -573,7 +574,7 @@ where
     ///
     /// // note that we are using `u8` as our index type
     /// let opt =
-    ///     capt::Capt::<1, 8, f32, u8>::try_with_point_radius(&points, (0.0, f32::INFINITY), 0.01);
+    ///     capt::Capt::<1, f32, u8>::try_with_point_radius(&points, (0.0, f32::INFINITY), 0.01, 1);
     ///
     /// assert!(opt.is_err());
     /// ```
@@ -804,7 +805,7 @@ where
     ///
     /// ```
     /// let points = [[0.0; 3], [1.0; 3], [0.1, 0.5, 1.0]];
-    /// let capt = capt::Capt::<3>::new(&points, (0.0, 1.0));
+    /// let capt = capt::Capt::<3>::new(&points, (0.0, 1.0), 1);
     ///
     /// assert!(capt.collides(&[1.1; 3], 0.2));
     /// assert!(!capt.collides(&[2.0; 3], 1.0));
@@ -900,7 +901,7 @@ where
     /// ];
     /// let radii = Simd::splat(0.05);
     ///
-    /// let tree = capt::Capt::<2, 4, f32, u32>::new(&points, (0.0, 0.1));
+    /// let tree = capt::Capt::<2, f32, u32>::new(&points, (0.0, 0.1), 4);
     ///
     /// println!("{tree:?}");
     ///
