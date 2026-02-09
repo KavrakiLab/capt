@@ -1,3 +1,0 @@
-[submodule "hilbert_test/hilbert-sort"]
-	path = hilbert_test/hilbert-sort
-	url = git@github.com:rkowalewski/hilbert-sort.git
