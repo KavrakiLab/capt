@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 capt = { path = "../capt", features = ["simd"] }
+wide = { version = "1.1.1", default-features = false }
 morton_filter = { path = "../morton_filter" }
 kiddo = { version = "5.2.2", features = ["simd"], default-features = false }
 rand = { version = "0.9.1", default-features = false }

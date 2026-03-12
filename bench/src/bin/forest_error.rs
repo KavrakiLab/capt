@@ -30,7 +30,7 @@ fn err_forest<const T: usize>(points: &[[f32; 3]], rng: &mut impl Rng) {
         kiddo_kdt.add(pt, 0);
     }
 
-    let (seq_needles, _) = make_needles::<3, 1>(rng, 10_000);
+    let (seq_needles, _) = make_needles::<3>(rng, 10_000);
 
     let mut total_err = 0.0;
     for &needle in &seq_needles {
