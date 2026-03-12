@@ -1,8 +1,7 @@
 //! Power-of-two k-d forests.
 
-use std::simd::{cmp::SimdPartialOrd, ptr::SimdConstPtr, Mask, Simd};
-
 use crate::{distsq, median_partition};
+use wide::{f32x8, i32x8, CmpGe};
 
 #[derive(Clone, Debug)]
 struct RandomizedTree<const K: usize> {
@@ -53,26 +52,25 @@ impl<const K: usize, const T: usize> PkdForest<K, T> {
     }
 
     #[must_use]
-    pub fn might_collide_simd<const L: usize>(
-        &self,
-        needles: &[Simd<f32, L>; K],
-        radii_squared: Simd<f32, L>,
-    ) -> bool {
-        let mut not_yet_collided = Mask::splat(true);
+    #[allow(clippy::cast_sign_loss)]
+    pub fn might_collide_simd(&self, needles: &[f32x8; K], radii_squared: f32x8) -> bool {
+        // all_true: f32x8 bitmask where all lanes are "not yet collided"
+        let all_true: f32x8 =
+            unsafe { core::mem::transmute::<i32x8, f32x8>(i32x8::splat(-1_i32)) };
+        let mut not_yet_collided = all_true;
 
         for tree in &self.test_seqs {
-            let indices = tree.mask_query(needles, not_yet_collided);
-            let mut dists_sq = Simd::splat(0.0);
-            let mut ptrs = Simd::splat(tree.points.as_ptr().cast()).wrapping_offset(indices);
-            for needle_set in needles {
-                let diffs =
-                    unsafe { Simd::gather_select_ptr(ptrs, not_yet_collided, Simd::splat(0.0)) }
-                        - needle_set;
-                dists_sq += diffs * diffs;
-                ptrs = ptrs.wrapping_add(Simd::splat(1));
+            let indices = tree.forward_pass_wide(needles);
+            let idx_arr = indices.to_array();
+            let mut dists_sq = f32x8::ZERO;
+            for (k, needle_values) in needles.iter().enumerate() {
+                let vals = f32x8::new(idx_arr.map(|i| tree.points[i as usize][k]));
+                let diffs = vals - needle_values;
+                dists_sq = dists_sq + diffs * diffs;
             }
 
-            not_yet_collided &= radii_squared.simd_lt(dists_sq).cast();
+            // lanes where dists_sq >= radii_squared have not (yet) collided
+            not_yet_collided = not_yet_collided & dists_sq.simd_ge(radii_squared);
 
             if !not_yet_collided.all() {
                 // at least one has collided - can return quickly
@@ -145,37 +143,24 @@ impl<const K: usize> RandomizedTree<K> {
         test_idx - self.tests.len()
     }
 
-    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-    /// Perform a masked SIMD query of this tree, only determining the location of the nearest
-    /// neighbors for points in `mask`.
-    fn mask_query<const L: usize>(
-        &self,
-        needles: &[Simd<f32, L>; K],
-        mask: Mask<isize, L>,
-    ) -> Simd<isize, L> {
-        let mut test_idxs: Simd<isize, L> = Simd::splat(0);
+    #[allow(clippy::cast_sign_loss)]
+    fn forward_pass_wide(&self, needles: &[f32x8; K]) -> i32x8 {
+        let mut test_idxs = i32x8::splat(0_i32);
         let mut state = self.seed;
 
-        // Advance the tests forward
         for _ in 0..self.tests.len().trailing_ones() {
-            let relevant_tests: Simd<f32, L> = unsafe {
-                Simd::gather_select_ptr(
-                    Simd::splat(self.tests.as_ptr().cast()).wrapping_offset(test_idxs),
-                    mask,
-                    Simd::splat(f32::NAN),
-                )
-            };
+            let idx_arr = test_idxs.to_array();
+            let relevant_tests =
+                f32x8::new(idx_arr.map(|i| unsafe { *self.tests.get_unchecked(i as usize) }));
             let d = state as usize % K;
-            let cmp_results: Mask<isize, L> = (needles[d].simd_ge(relevant_tests)).into();
-
-            // TODO is there a faster way than using a conditional select?
-            test_idxs <<= Simd::splat(1);
-            test_idxs += Simd::splat(1);
-            test_idxs += cmp_results.to_simd() & Simd::splat(1);
+            let cmp_f = needles[d].simd_ge(relevant_tests);
+            let cmp_bit: i32x8 =
+                unsafe { core::mem::transmute::<f32x8, i32x8>(cmp_f) } & i32x8::splat(1);
+            test_idxs = (test_idxs << 1_i32) + 1_i32 + cmp_bit;
             state = xorshift(state);
         }
 
-        test_idxs - Simd::splat(self.tests.len() as isize)
+        test_idxs - i32x8::splat(self.tests.len() as i32)
     }
 }
 

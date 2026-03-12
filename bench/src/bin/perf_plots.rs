@@ -1,14 +1,10 @@
-#![feature(portable_simd)]
-
-use std::{
-    cmp::min, env::args, error::Error, fs::File, hint::black_box, io::Write, simd::f32x8,
-    time::Duration,
-};
+use std::{cmp::min, env::args, error::Error, fs::File, hint::black_box, io::Write, time::Duration};
 
 use bench::{
     forest::PkdForest, fuzz_pointcloud, kdt::PkdTree, parse_pointcloud_csv, parse_trace_csv,
     simd_trace_new, stopwatch, SimdTrace, Trace,
 };
+use wide::f32x8;
 use capt::Capt;
 #[allow(unused_imports)]
 use kiddo::SquaredEuclidean;
@@ -17,13 +13,12 @@ use rand::{seq::SliceRandom, Rng};
 use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
 
 const N_TRIALS: usize = 100_000;
-const L: usize = 8;
 
 const QUERY_RADIUS: f32 = 0.05;
 
 struct Benchmark<'a> {
     seq: &'a Trace,
-    simd: &'a SimdTrace<L>,
+    simd: &'a SimdTrace,
     f_query: File,
 }
 
@@ -89,7 +84,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("number of tests: {}", all_trace.len());
     println!("radius range: {r_range:?}");
 
-    let captree = Capt::<3>::new(&points, r_range, L);
+    let captree = Capt::<3>::new(&points, r_range, 8);
 
     let collide_trace: Box<Trace> = all_trace
         .iter()
@@ -156,7 +151,7 @@ fn do_row(
 
     let (pkdt, pkdt_time) = stopwatch(|| PkdTree::new(points));
 
-    let (captree, captree_time) = stopwatch(|| Capt::<3, f32, u32>::new(points, r_range, L));
+    let (captree, captree_time) = stopwatch(|| Capt::<3, f32, u32>::new(points, r_range, 8));
 
     let (f1, f1_time) = stopwatch(|| PkdForest::<3, 1>::new(points));
     let (f2, f2_time) = stopwatch(|| PkdForest::<3, 2>::new(points));
@@ -224,7 +219,7 @@ fn do_row(
         });
         let (_, pkdt_total_simd_q_time) = stopwatch(|| {
             for (centers, radii) in simd_trace.iter() {
-                black_box(pkdt.might_collide_simd(centers, radii * radii));
+                black_box(pkdt.might_collide_simd(centers, *radii * *radii));
             }
         });
         let (_, captree_total_seq_q_time) = stopwatch(|| {
@@ -234,7 +229,7 @@ fn do_row(
         });
         let (_, captree_total_simd_q_time) = stopwatch(|| {
             for (centers, radii) in simd_trace.iter() {
-                black_box(captree.collides_simd(centers, radii * radii));
+                black_box(captree.collides_simd(centers, *radii * *radii));
             }
         });
 
@@ -280,7 +275,7 @@ fn bench_forest<const T: usize>(
 ) -> Duration {
     stopwatch(|| {
         for (centers, radii) in simd_trace {
-            black_box(forest.might_collide_simd(centers, radii * radii));
+            black_box(forest.might_collide_simd(centers, *radii * *radii));
         }
     })
     .1

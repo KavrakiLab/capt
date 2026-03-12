@@ -1,16 +1,14 @@
-#![feature(portable_simd)]
-
 use std::{
     env,
     error::Error,
     path::Path,
-    simd::Simd,
     time::{Duration, Instant},
 };
 
 use capt::Axis;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
+use wide::f32x8;
 
 use rand_distr::{Distribution, Normal};
 
@@ -44,34 +42,33 @@ pub fn get_points(n_points_if_no_cloud: usize) -> Box<[[f32; 3]]> {
 /// # Generic parameters
 ///
 /// - `D`: the dimension of the space
-/// - `L`: the number of SIMD lanes
 ///
 /// # Returns
 ///
 /// Returns a pair `(seq_needles, simd_needles)`, where `seq_needles` is correctly shaped for
-/// sequential querying and `simd_needles` is correctly shaped for SIMD querying.
-pub fn make_needles<const D: usize, const L: usize>(
+/// sequential querying and `simd_needles` is correctly shaped for SIMD querying (8 lanes).
+pub fn make_needles<const D: usize>(
     rng: &mut impl Rng,
     n_trials: usize,
-) -> (Vec<[f32; D]>, Vec<[Simd<f32, L>; D]>) {
+) -> (Vec<[f32; D]>, Vec<[f32x8; D]>) {
     let mut seq_needles = Vec::new();
     let mut simd_needles = Vec::new();
 
-    for _ in 0..n_trials / L {
-        let mut simd_pts = [Simd::splat(0.0); D];
-        for l in 0..L {
+    for _ in 0..n_trials / 8 {
+        let mut simd_pts = [[0.0_f32; 8]; D];
+        for l in 0..8 {
             let mut seq_needle = [0.0; D];
-            for d in 0..3 {
+            for d in 0..D {
                 let value = rng.random_range::<f32, _>(0.0..1.0);
                 seq_needle[d] = value;
-                simd_pts[d].as_mut_array()[l] = value;
+                simd_pts[d][l] = value;
             }
             seq_needles.push(seq_needle);
         }
-        simd_needles.push(simd_pts);
+        simd_needles.push(simd_pts.map(f32x8::new));
     }
 
-    assert_eq!(seq_needles.len(), simd_needles.len() * L);
+    assert_eq!(seq_needles.len(), simd_needles.len() * 8);
 
     (seq_needles, simd_needles)
 }
@@ -82,39 +79,38 @@ pub fn make_needles<const D: usize, const L: usize>(
 /// # Generic parameters
 ///
 /// - `D`: the dimension of the space
-/// - `L`: the number of SIMD lanes
 ///
 /// # Returns
 ///
 /// Returns a pair `(seq_needles, simd_needles)`, where `seq_needles` is correctly shaped for
-/// sequential querying and `simd_needles` is correctly shaped for SIMD querying.
+/// sequential querying and `simd_needles` is correctly shaped for SIMD querying (8 lanes).
 /// Additionally, each element of each element of `simd_needles` will be relatively close in space.
-pub fn make_correlated_needles<const D: usize, const L: usize>(
+pub fn make_correlated_needles<const D: usize>(
     rng: &mut impl Rng,
     n_trials: usize,
-) -> (Vec<[f32; D]>, Vec<[Simd<f32, L>; D]>) {
+) -> (Vec<[f32; D]>, Vec<[f32x8; D]>) {
     let mut seq_needles = Vec::new();
     let mut simd_needles = Vec::new();
 
-    for _ in 0..n_trials / L {
+    for _ in 0..n_trials / 8 {
         let mut start_pt = [0.0; D];
         for v in start_pt.iter_mut() {
             *v = rng.random_range::<f32, _>(0.0..1.0);
         }
-        let mut simd_pts = [Simd::splat(0.0); D];
-        for l in 0..L {
+        let mut simd_pts = [[0.0_f32; 8]; D];
+        for l in 0..8 {
             let mut seq_needle = [0.0; D];
             for d in 0..D {
                 let value = start_pt[d] + rng.random_range::<f32, _>(-0.02..0.02);
                 seq_needle[d] = value;
-                simd_pts[d].as_mut_array()[l] = value;
+                simd_pts[d][l] = value;
             }
             seq_needles.push(seq_needle);
         }
-        simd_needles.push(simd_pts);
+        simd_needles.push(simd_pts.map(f32x8::new));
     }
 
-    assert_eq!(seq_needles.len(), simd_needles.len() * L);
+    assert_eq!(seq_needles.len(), simd_needles.len() * 8);
 
     (seq_needles, simd_needles)
 }
@@ -168,21 +164,21 @@ pub fn parse_trace_csv(p: impl AsRef<Path>) -> Result<Box<Trace>, Box<dyn std::e
         .collect()
 }
 
-pub type SimdTrace<const L: usize> = [([Simd<f32, L>; 3], Simd<f32, L>)];
+pub type SimdTrace = [([f32x8; 3], f32x8)];
 
-pub fn simd_trace_new<const L: usize>(trace: &Trace) -> Box<SimdTrace<L>> {
+pub fn simd_trace_new(trace: &Trace) -> Box<SimdTrace> {
     trace
-        .chunks(L)
+        .chunks(8)
         .map(|w| {
-            let mut centers = [[0.0; L]; 3];
-            let mut radii = [0.0; L];
+            let mut centers = [[0.0_f32; 8]; 3];
+            let mut radii = [0.0_f32; 8];
             for (l, ([x, y, z], r)) in w.iter().copied().enumerate() {
                 centers[0][l] = x;
                 centers[1][l] = y;
                 centers[2][l] = z;
                 radii[l] = r;
             }
-            (centers.map(Simd::from_array), Simd::from_array(radii))
+            (centers.map(f32x8::new), f32x8::new(radii))
         })
         .collect()
 }

@@ -1,8 +1,5 @@
-#![feature(portable_simd)]
-
-use std::simd::Simd;
-
 use bench::{dist, kdt::PkdTree, parse_pointcloud_csv, parse_trace_csv, trace_r_range};
+use wide::f32x8;
 use capt::Capt;
 use kiddo::SquaredEuclidean;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -65,19 +62,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let exact_dist = dist(kdt.get_point(kdt.query1_exact(*center)), *center);
         assert_eq!(exact_dist, exact_kiddo_dist);
 
-        let simd_center: [Simd<f32, 8>; 3] = [
-            Simd::splat(center[0]),
-            Simd::splat(center[1]),
-            Simd::splat(center[2]),
+        let simd_center: [f32x8; 3] = [
+            f32x8::splat(center[0]),
+            f32x8::splat(center[1]),
+            f32x8::splat(center[2]),
         ];
         if exact_dist <= *r {
             println!("iter {i}: {:?} (collides)", (center, r));
             assert!(aff_tree.collides(center, *r));
-            assert!(aff_tree.collides_simd(&simd_center, Simd::splat(*r)))
+            assert!(aff_tree.collides_simd(&simd_center, f32x8::splat(*r)))
         } else {
             println!("iter {i}: {:?} (no collides)", (center, r));
             assert!(!aff_tree.collides(center, *r));
-            assert!(!aff_tree.collides_simd(&simd_center, Simd::splat(*r)))
+            assert!(!aff_tree.collides_simd(&simd_center, f32x8::splat(*r)))
         }
     }
 

@@ -60,14 +60,12 @@
 //! ## Optional features
 //!
 //! This crate exposes one feature, `simd`, which enables a SIMD-parallel interface for querying
-//! `Capt`s. The `simd` feature requires nightly Rust and therefore should be considered unstable.
-//! This enables the function `Capt::collides_simd`, a parallel collision checker for batches of
-//! search queries.
+//! `Capt`s. This enables the function `Capt::collides_simd`, a parallel collision checker for
+//! batches of 8 f32 search queries using the `wide` crate.
 //!
 //! ## License
 //!
 //! This work is licensed to you under the Apache 2.0 license.
-#![cfg_attr(feature = "simd", feature(portable_simd))]
 #![cfg_attr(not(test), no_std)]
 #![warn(clippy::pedantic, clippy::cargo, clippy::nursery, missing_docs)]
 
@@ -85,14 +83,7 @@ use core::{
 };
 
 #[cfg(feature = "simd")]
-use core::{
-    ops::{AddAssign, Mul, SubAssign},
-    simd::{
-        Mask, Simd, SimdElement,
-        cmp::{SimdPartialEq, SimdPartialOrd},
-        ptr::SimdConstPtr,
-    },
-};
+use wide::{f32x8, i32x8, CmpGe, CmpLe};
 
 /// A generic trait representing values which may be used as an "axis;" that is, elements of a
 /// vector representing a point.
@@ -192,30 +183,6 @@ pub trait Axis: PartialOrd + Copy + Sub<Output = Self> + Add<Output = Self> {
     fn square(self) -> Self;
 }
 
-#[cfg(feature = "simd")]
-/// A trait used for SIMD elements.
-pub trait AxisSimdElement: SimdElement + Default + Axis {}
-
-#[cfg(feature = "simd")]
-/// A trait used for masks over SIMD vectors, used for parallel querying on [`Capt`]s.
-///
-/// The interface for this trait should be considered unstable since the standard SIMD API may
-/// change with Rust versions.
-pub trait AxisSimd<const L: usize>:
-    Sized
-    + SimdPartialOrd
-    + Add<Output = Self>
-    + AddAssign
-    + Sub<Output = Self>
-    + SubAssign
-    + Mul<Output = Self>
-{
-    /// Cast a mask for a SIMD vector into a mask of `isize`s.
-    fn cast_mask(mask: <Self as SimdPartialEq>::Mask) -> Mask<isize, L>;
-    /// Determine whether a mask contains any true elements.
-    fn mask_any(mask: <Self as SimdPartialEq>::Mask) -> bool;
-}
-
 /// An index type used for lookups into and out of arrays.
 ///
 /// This is implemented so that [`Capt`]s can use smaller index sizes (such as [`u32`] or [`u16`])
@@ -223,23 +190,6 @@ pub trait AxisSimd<const L: usize>:
 pub trait Index: TryFrom<usize> + TryInto<usize> + Copy {
     /// The zero index. This must be equal to `(0usize).try_into().unwrap()`.
     const ZERO: Self;
-}
-
-#[cfg(feature = "simd")]
-/// A SIMD parallel version of [`Index`].
-///
-/// This is used for implementing SIMD lookups in a [`Capt`].
-/// The interface for this trait should be considered unstable since the standard SIMD API may
-/// change with Rust versions.
-pub trait IndexSimd: SimdElement + Default {
-    #[must_use]
-    /// Convert a SIMD array of `Self` to a SIMD array of `usize`, without checking that each
-    /// element is valid.
-    ///
-    /// # Safety
-    ///
-    /// This function is only safe if all values of `x` are valid when converted to a `usize`.
-    unsafe fn to_simd_usize_unchecked<const L: usize>(x: Simd<Self, L>) -> Simd<usize, L>;
 }
 
 macro_rules! impl_axis {
@@ -261,18 +211,6 @@ macro_rules! impl_axis {
             }
         }
 
-        #[cfg(feature = "simd")]
-        impl AxisSimdElement for $t {}
-
-        #[cfg(feature = "simd")]
-        impl<const L: usize> AxisSimd<L> for Simd<$t, L> {
-            fn cast_mask(mask: <Self as SimdPartialEq>::Mask) -> Mask<isize, L> {
-                mask.into()
-            }
-            fn mask_any(mask: <Self as SimdPartialEq>::Mask) -> bool {
-                mask.any()
-            }
-        }
     };
 }
 
@@ -280,13 +218,6 @@ macro_rules! impl_idx {
     ($t: ty) => {
         impl Index for $t {
             const ZERO: Self = 0;
-        }
-
-        #[cfg(feature = "simd")]
-        impl IndexSimd for $t {
-            unsafe fn to_simd_usize_unchecked<const L: usize>(x: Simd<Self, L>) -> Simd<usize, L> {
-                unsafe { x.to_array().map(|a| a.try_into().unwrap_unchecked()).into() }
-            }
         }
     };
 }
@@ -312,30 +243,22 @@ fn clamp<A: PartialOrd>(x: A, min: A, max: A) -> A {
 }
 
 #[inline]
-#[allow(clippy::cast_possible_wrap)]
+#[allow(clippy::cast_sign_loss)]
 #[cfg(feature = "simd")]
-fn forward_pass_simd<A, const K: usize, const L: usize>(
-    tests: &[A],
-    centers: &[Simd<A, L>; K],
-) -> Simd<isize, L>
-where
-    Simd<A, L>: AxisSimd<L>,
-    A: AxisSimdElement,
-{
-    let mut test_idxs: Simd<isize, L> = Simd::splat(0);
+fn forward_pass_wide<const K: usize>(tests: &[f32], centers: &[f32x8; K]) -> i32x8 {
+    let mut test_idxs = i32x8::splat(0_i32);
     let mut k = 0;
     for _ in 0..tests.len().trailing_ones() {
-        let test_ptrs = Simd::splat(tests.as_ptr()).wrapping_offset(test_idxs);
-        let relevant_tests: Simd<A, L> = unsafe { Simd::gather_ptr(test_ptrs) };
-        let cmp_results: Mask<isize, L> =
-            Simd::<A, L>::cast_mask(centers[k % K].simd_ge(relevant_tests));
-
-        let one = Simd::splat(1);
-        test_idxs = (test_idxs << one) + one + (cmp_results.to_simd() & Simd::splat(1));
+        let idx_arr = test_idxs.to_array();
+        let relevant_tests =
+            f32x8::new(idx_arr.map(|i| unsafe { *tests.get_unchecked(i as usize) }));
+        let cmp_f = centers[k % K].simd_ge(relevant_tests);
+        let cmp_bit: i32x8 =
+            unsafe { core::mem::transmute::<f32x8, i32x8>(cmp_f) } & i32x8::splat(1);
+        test_idxs = (test_idxs << 1_i32) + 1_i32 + cmp_bit;
         k = (k + 1) % K;
     }
-
-    test_idxs - Simd::splat(tests.len() as isize)
+    test_idxs - i32x8::splat(tests.len() as i32)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -871,116 +794,112 @@ where
     }
 }
 
-#[allow(clippy::mismatching_type_param_order)]
 #[cfg(feature = "simd")]
-impl<A, I, const K: usize> Capt<K, A, I>
+impl<I, const K: usize> Capt<K, f32, I>
 where
-    I: IndexSimd,
-    A: Mul<Output = A>,
+    I: Index,
 {
     #[must_use]
     /// Determine whether any sphere in the list of provided spheres intersects a point in this
     /// tree.
     ///
+    /// Each element of `centers` is an [`f32x8`] holding the coordinate for that dimension across
+    /// 8 parallel query spheres. `radii` holds the radius for each of the 8 queries.
+    ///
     /// # Panics
     ///
-    /// This function will panic if the `Capt` was not constructed with a large enough lane count
-    /// for the query.
+    /// This function will panic if the `Capt` was not constructed with a lane count of at least 8.
     ///
     /// # Examples
     ///
     /// ```
-    /// #![feature(portable_simd)]
-    /// use std::simd::Simd;
+    /// use wide::f32x8;
     ///
     /// let points = [[1.0, 2.0], [1.1, 1.1]];
     ///
     /// let centers = [
-    ///     Simd::from_array([1.0, 1.1, 1.2, 1.3]), // x-positions
-    ///     Simd::from_array([1.0, 1.1, 1.2, 1.3]), // y-positions
+    ///     f32x8::new([1.0, 1.1, 1.2, 1.3, 0.0, 0.0, 0.0, 0.0]), // x-positions
+    ///     f32x8::new([1.0, 1.1, 1.2, 1.3, 0.0, 0.0, 0.0, 0.0]), // y-positions
     /// ];
-    /// let radii = Simd::splat(0.05);
+    /// let radii = f32x8::splat(0.05);
     ///
-    /// let tree = capt::Capt::<2, f32, u32>::new(&points, (0.0, 0.1), 4);
+    /// let tree = capt::Capt::<2, f32, u32>::new(&points, (0.0, 0.1), 8);
     ///
     /// println!("{tree:?}");
     ///
     /// assert!(tree.collides_simd(&centers, radii));
     /// ```
-    pub fn collides_simd<const L: usize>(
-        &self,
-        centers: &[Simd<A, L>; K],
-        mut radii: Simd<A, L>,
-    ) -> bool
-    where
-        Simd<A, L>: AxisSimd<L>,
-        A: AxisSimdElement,
-    {
-        assert!(L.is_power_of_two(), "lane count must be power of two");
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+    pub fn collides_simd(&self, centers: &[f32x8; K], mut radii: f32x8) -> bool {
         assert!(
-            1 << self.lanes_log2 >= L,
-            "lane count of query must be lower than lane count of CAPT"
+            1 << self.lanes_log2 >= 8,
+            "CAPT must be constructed with at least 8 lanes for f32x8 queries"
         );
-        radii += Simd::splat(self.r_point);
-        let zs = forward_pass_simd(&self.tests, centers);
+        radii = radii + f32x8::splat(self.r_point);
+        let zs = forward_pass_wide(&self.tests, centers);
+        let zs_arr = zs.to_array();
 
-        let mut inbounds = Mask::splat(true);
-
-        let mut aabb_ptrs = Simd::splat(self.aabbs.as_ptr()).wrapping_offset(zs).cast();
-
-        unsafe {
-            for center in centers {
-                inbounds &= Simd::<A, L>::cast_mask(
-                    (Simd::gather_select_ptr(aabb_ptrs, inbounds, Simd::splat(A::NEG_INFINITY))
-                        - radii)
-                        .simd_le(*center),
-                );
-                aabb_ptrs = aabb_ptrs.wrapping_add(Simd::splat(1));
-            }
-            for center in centers {
-                inbounds &= Simd::<A, L>::cast_mask(
-                    Simd::gather_select_ptr(aabb_ptrs, inbounds, Simd::splat(A::NEG_INFINITY))
-                        .simd_ge(*center - radii),
-                );
-                aabb_ptrs = aabb_ptrs.wrapping_add(Simd::splat(1));
-            }
+        // AABB inbounds check: flat f32 view of aabb array (lo[0..K] then hi[0..K] per entry)
+        let aabb_f32 = unsafe {
+            core::slice::from_raw_parts(self.aabbs.as_ptr().cast::<f32>(), self.aabbs.len() * 2 * K)
+        };
+        let all_true: f32x8 =
+            unsafe { core::mem::transmute::<i32x8, f32x8>(i32x8::splat(-1_i32)) };
+        let mut inbounds = all_true;
+        for k in 0..K {
+            let lo_vals = f32x8::new(core::array::from_fn(|j| unsafe {
+                *aabb_f32.get_unchecked(zs_arr[j] as usize * (2 * K) + k)
+            }));
+            inbounds = inbounds & (lo_vals - radii).simd_le(centers[k]);
+        }
+        for k in 0..K {
+            let hi_vals = f32x8::new(core::array::from_fn(|j| unsafe {
+                *aabb_f32.get_unchecked(zs_arr[j] as usize * (2 * K) + K + k)
+            }));
+            inbounds = inbounds & hi_vals.simd_ge(centers[k] - radii);
         }
         if !inbounds.any() {
             return false;
         }
 
-        // retrieve start/end pointers for the affordance buffer
-        let start_ptrs = Simd::splat(self.starts.as_ptr()).wrapping_offset(zs);
-        let starts = unsafe { I::to_simd_usize_unchecked(Simd::gather_ptr(start_ptrs)) }.to_array();
-        let ends = unsafe {
-            I::to_simd_usize_unchecked(Simd::gather_ptr(start_ptrs.wrapping_add(Simd::splat(1))))
-        }
-        .to_array();
+        let inbounds_arr: [i32; 8] =
+            unsafe { core::mem::transmute::<f32x8, i32x8>(inbounds) }.to_array();
+        let starts: [usize; 8] = core::array::from_fn(|j| unsafe {
+            self.starts[zs_arr[j] as usize].try_into().unwrap_unchecked()
+        });
+        let ends: [usize; 8] = core::array::from_fn(|j| unsafe {
+            self.starts[zs_arr[j] as usize + 1].try_into().unwrap_unchecked()
+        });
 
-        starts
-            .into_iter()
-            .zip(ends)
-            .zip(inbounds.to_array())
-            .enumerate()
-            .filter_map(|(j, r)| r.1.then_some((j, r.0)))
-            .any(|(j, (start, end))| {
-                let mut n_center = [Simd::splat(A::ZERO); K];
+        let centers_arr: [[f32; 8]; K] = core::array::from_fn(|k| centers[k].to_array());
+        let radii_arr = radii.to_array();
+
+        for j in 0..8 {
+            if inbounds_arr[j] == 0 {
+                continue;
+            }
+            let start = starts[j];
+            let end = ends[j];
+            let n_center: [f32x8; K] =
+                core::array::from_fn(|k| f32x8::splat(centers_arr[k][j]));
+            let rs = f32x8::splat(radii_arr[j]);
+            let rs_sq = rs * rs;
+            let mut i = start;
+            while i < end {
+                let mut dists_sq = f32x8::ZERO;
+                #[allow(clippy::needless_range_loop)]
                 for k in 0..K {
-                    n_center[k] = Simd::splat(centers[k][j]);
+                    let vals: f32x8 = unsafe { *self.afforded[k].as_ptr().add(i).cast() };
+                    let diff = vals - n_center[k];
+                    dists_sq = dists_sq + diff * diff;
                 }
-                let rs = Simd::splat(radii[j]);
-                let rs_sq = rs * rs;
-                (start..end).step_by(L).any(|i| {
-                    let mut dists_sq = Simd::splat(A::ZERO);
-                    #[allow(clippy::needless_range_loop)]
-                    for k in 0..K {
-                        let vals: Simd<A, L> = unsafe { *self.afforded[k].as_ptr().add(i).cast() };
-                        let diff = vals - n_center[k];
-                        dists_sq += diff * diff;
-                    }
-                    Simd::<A, L>::mask_any(dists_sq.simd_le(rs_sq))
-                })
-            })
+                if dists_sq.simd_le(rs_sq).any() {
+                    return true;
+                }
+                i += 8;
+            }
+        }
+        false
     }
 }
 
@@ -1071,6 +990,22 @@ unsafe fn median_partition<A: Axis, const K: usize>(points: &mut [[A; K]], k: us
             .max_by(|a, b| a.partial_cmp(b).unwrap_unchecked())
             .unwrap();
         A::in_between(med_lo, med_hi[k])
+    }
+}
+
+#[cfg(all(test, feature = "simd"))]
+#[test]
+fn simd_instruction_set() {
+    if cfg!(target_feature = "avx2") {
+        println!("SIMD: AVX2");
+    } else if cfg!(target_feature = "avx") {
+        println!("SIMD: AVX");
+    } else if cfg!(target_feature = "sse4.1") {
+        println!("SIMD: SSE4.1");
+    } else if cfg!(target_feature = "sse2") {
+        println!("SIMD: SSE2");
+    } else {
+        println!("SIMD: scalar fallback (no SSE/AVX detected)");
     }
 }
 

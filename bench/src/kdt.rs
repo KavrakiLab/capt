@@ -1,10 +1,8 @@
-use std::{
-    mem::size_of,
-    simd::{cmp::SimdPartialOrd, num::SimdInt, ptr::SimdConstPtr, Mask, Simd},
-};
+use std::mem::size_of;
 
 use crate::{distsq, forward_pass, median_partition};
-use capt::{Aabb, AxisSimd, AxisSimdElement};
+use capt::Aabb;
+use wide::{f32x8, i32x8, CmpGe, CmpLt};
 
 #[derive(Clone, Debug, PartialEq)]
 /// A power-of-two KD-tree.
@@ -81,27 +79,21 @@ impl<const K: usize> PkdTree<K> {
     }
 
     #[must_use]
-    #[allow(clippy::cast_possible_wrap)]
-    pub fn might_collide_simd<const L: usize>(
-        &self,
-        needles: &[Simd<f32, L>; K],
-        radii_squared: Simd<f32, L>,
-    ) -> bool {
-        let indices = forward_pass_simd(&self.tests, needles);
-        let mut dists_squared = Simd::splat(0.0);
-        let mut ptrs =
-            Simd::splat(self.points.as_ptr().cast()).wrapping_add(indices * Simd::splat(K));
-        for needle_values in needles {
-            let deltas = unsafe { Simd::gather_ptr(ptrs) } - needle_values;
-            dists_squared += deltas * deltas;
-            ptrs = ptrs.wrapping_add(Simd::splat(1));
+    #[allow(clippy::cast_sign_loss)]
+    pub fn might_collide_simd(&self, needles: &[f32x8; K], radii_squared: f32x8) -> bool {
+        let indices = forward_pass_wide(&self.tests, needles);
+        let idx_arr = indices.to_array();
+        let mut dists_squared = f32x8::ZERO;
+        for (k, needle_values) in needles.iter().enumerate() {
+            let vals = f32x8::new(idx_arr.map(|i| self.points[i as usize][k]));
+            let deltas = vals - needle_values;
+            dists_squared = dists_squared + deltas * deltas;
         }
         dists_squared.simd_lt(radii_squared).any()
     }
 
     #[must_use]
-    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-    /// Query for one point in this tree, returning an exact answer.
+    #[allow(clippy::cast_possible_wrap, clippy::missing_panics_doc)]
     pub fn query1_exact(&self, needle: [f32; K]) -> usize {
         let mut id = usize::MAX;
         let mut best_distsq = f32::INFINITY;
@@ -191,40 +183,33 @@ impl<const K: usize> PkdTree<K> {
 
     #[must_use]
     #[allow(clippy::missing_panics_doc)]
-    pub const fn get_point(&self, id: usize) -> [f32; K] {
+    pub fn get_point(&self, id: usize) -> [f32; K] {
         self.points[id]
     }
 
     #[must_use]
     /// Return the total memory used (stack + heap) by this structure.
-    pub const fn memory_used(&self) -> usize {
+    pub fn memory_used(&self) -> usize {
         size_of::<Self>() + (self.points.len() * K + self.tests.len()) * size_of::<f32>()
     }
 }
 
 #[inline]
-#[allow(clippy::cast_possible_wrap)]
-fn forward_pass_simd<A, const K: usize, const L: usize>(
-    tests: &[A],
-    centers: &[Simd<A, L>; K],
-) -> Simd<usize, L>
-where
-    Simd<A, L>: AxisSimd<L>,
-    A: AxisSimdElement,
-{
-    let mut i: Simd<usize, L> = Simd::splat(0);
+#[allow(clippy::cast_sign_loss)]
+fn forward_pass_wide<const K: usize>(tests: &[f32], centers: &[f32x8; K]) -> i32x8 {
+    let mut test_idxs = i32x8::splat(0_i32);
     let mut k = 0;
     for _ in 0..tests.len().trailing_ones() {
-        let test_ptrs = Simd::splat(tests.as_ptr()).wrapping_add(i);
-        let relevant_tests = unsafe { Simd::gather_ptr(test_ptrs) };
-        let cmp: Mask<isize, L> = Simd::<A, L>::cast_mask(centers[k].simd_ge(relevant_tests));
-
-        let one = Simd::splat(1);
-        i = (i << one) + one + (cmp.to_simd().cast() & one);
+        let idx_arr = test_idxs.to_array();
+        let relevant_tests =
+            f32x8::new(idx_arr.map(|i| unsafe { *tests.get_unchecked(i as usize) }));
+        let cmp_f = centers[k % K].simd_ge(relevant_tests);
+        let cmp_bit: i32x8 =
+            unsafe { core::mem::transmute::<f32x8, i32x8>(cmp_f) } & i32x8::splat(1);
+        test_idxs = (test_idxs << 1_i32) + 1_i32 + cmp_bit;
         k = (k + 1) % K;
     }
-
-    i - Simd::splat(tests.len())
+    test_idxs - i32x8::splat(tests.len() as i32)
 }
 
 #[cfg(test)]
@@ -274,11 +259,13 @@ mod tests {
         ];
         let kdt = PkdTree::new(&points);
 
-        let needles = [Simd::from_array([-1.0, 2.0]), Simd::from_array([-1.0, 2.0])];
-        assert_eq!(
-            forward_pass_simd(&kdt.tests, &needles),
-            Simd::from_array([0, points.len() - 1])
-        );
+        let needles = [
+            f32x8::new([-1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            f32x8::new([-1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        ];
+        let result = forward_pass_wide(&kdt.tests, &needles).to_array();
+        assert_eq!(result[0], 0);
+        assert_eq!(result[1], (points.len() - 1) as i32);
     }
 
     #[test]
