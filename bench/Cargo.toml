@@ -9,6 +9,6 @@ publish = false
 capt = { path = "../capt", features = ["simd"] }
 morton_filter = { path = "../morton_filter" }
 kiddo = { version = "5.2.2", features = ["simd"], default-features = false }
-rand = { version = "0.9.1", default-features = false }
-rand_chacha = { version = "0.9.0", default-features = false }
-rand_distr = { version = "0.5.1", default-features = false }
+rand = { version = "0.10.0", default-features = false }
+rand_chacha = { version = "0.10.0", default-features = false }
+rand_distr = { version = "0.6.0", default-features = false }

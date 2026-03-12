@@ -1076,7 +1076,7 @@ unsafe fn median_partition<A: Axis, const K: usize>(points: &mut [[A; K]], k: us
 
 #[cfg(test)]
 mod tests {
-    use rand::{Rng, SeedableRng, rngs::SmallRng};
+    use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
     use super::*;
 

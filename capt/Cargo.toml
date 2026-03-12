@@ -16,7 +16,7 @@ keywords = [
 categories = ["no-std", "science", "science::robotics", "algorithms"]
 
 [dev-dependencies]
-rand = { version = "0.9.1", default-features = false, features = ["small_rng"] }
+rand = { version = "0.10.0", default-features = false }
 
 [features]
 simd = []

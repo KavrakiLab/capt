@@ -13,7 +13,7 @@ use capt::Capt;
 #[allow(unused_imports)]
 use kiddo::SquaredEuclidean;
 use morton_filter::morton_filter;
-use rand::{seq::SliceRandom, Rng};
+use rand::{seq::SliceRandom, RngExt};
 use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
 
 const N_TRIALS: usize = 100_000;

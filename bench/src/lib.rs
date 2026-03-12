@@ -9,7 +9,7 @@ use std::{
 };
 
 use capt::Axis;
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngExt, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
 use rand_distr::{Distribution, Normal};

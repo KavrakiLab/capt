@@ -5,7 +5,7 @@ use std::simd::Simd;
 use bench::{dist, kdt::PkdTree, parse_pointcloud_csv, parse_trace_csv, trace_r_range};
 use capt::Capt;
 use kiddo::SquaredEuclidean;
-use rand::{seq::SliceRandom, Rng, SeedableRng};
+use rand::{seq::SliceRandom, RngExt, SeedableRng};
 
 const N: usize = 1 << 12;
 const R: f32 = 0.02;
