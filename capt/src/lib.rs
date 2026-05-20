@@ -414,15 +414,14 @@ pub enum NewCaptError {
     InvalidLaneCount,
 }
 
-/// An iterator over the points in a `[Capt]`.
-/// This structure can only be created by `[Capt::points]`.
+/// An iterator over the points in a [`Capt`].
+/// This structure can only be created by [`Capt::points`].
 /// This iterator also skips non-finite points.
 ///
 /// # Examples
 ///
 /// ```
 /// # use capt::{Capt, Points};
-///
 /// let capt = Capt::<1>::new(&[[0.0]], (0.0, f32::INFINITY), 1);
 /// let _points: Points<1> = capt.points();
 /// ```
@@ -867,14 +866,13 @@ where
         })
     }
 
-    /// Get an iterator over the points in this Capt.
+    /// Get an iterator over the points in this `Capt`.
     /// The iterator skips non-finite points.
     /// It makes no guarantee of iteration order.
     ///
     ///
     /// ```
     /// # use capt::{Capt, Points};
-    ///
     /// let capt = Capt::<2>::new(&[[0.0, 1.0]], (0.0, f32::INFINITY), 1);
     /// for point in capt.points() {
     ///     println!("{point:?}");
