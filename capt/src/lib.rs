@@ -863,6 +863,22 @@ where
         })
     }
 
+    /// Get the number of supported SIMD query lanes in this `Capt`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use capt::Capt;
+    /// let capt1 = Capt::<1>::new(&[[0.0]], (0.0, f32::INFINITY), 1);
+    /// assert_eq!(capt1.n_lanes(), 1);
+    ///
+    /// let capt16 = Capt::<1>::new(&[[0.0]], (0.0, f32::INFINITY), 16);
+    /// assert_eq!(capt16.n_lanes(), 16);
+    /// ```
+    pub fn n_lanes(&self) -> usize {
+        1 << (self.lanes_log2 as usize)
+    }
+
     /// Get an iterator over the points in this `Capt`.
     /// The iterator skips non-finite points.
     /// It makes no guarantee of iteration order.
