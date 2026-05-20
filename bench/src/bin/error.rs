@@ -1,5 +1,3 @@
-#![feature(portable_simd)]
-
 use bench::{dist, fuzz_pointcloud, get_points, kdt::PkdTree, make_needles};
 use kiddo::SquaredEuclidean;
 use rand::{Rng, SeedableRng};
