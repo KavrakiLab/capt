@@ -346,9 +346,6 @@ where
 /// # Generic parameters
 ///
 /// - `K`: The dimension of the space.
-/// - `L`: The lane size of this tree. Internally, this is the upper bound on the width of a SIMD
-///   lane that can be used in this data structure. The alignment of this structure must be a power
-///   of two.
 /// - `A`: The value of the axes of each point. This should typically be `f32` or `f64`. This should
 ///   implement [`Axis`].
 /// - `I`: The index integer. This should generally be an unsigned integer, such as `usize` or
