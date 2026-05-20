@@ -414,6 +414,24 @@ pub enum NewCaptError {
     InvalidLaneCount,
 }
 
+/// An iterator over the points in a `[Capt]`.
+/// This structure can only be created by `[Capt::points]`.
+/// This iterator also skips non-finite points.
+///
+/// # Examples
+///
+/// ```
+/// # use capt::{Capt, Points};
+///
+/// let capt = Capt::<1>::new(&[[0.0]], (0.0, f32::INFINITY), 1);
+/// let _points: Points<1> = capt.points();
+/// ```
+pub struct Points<'a, const K: usize, A = f32, I = usize> {
+    afforded: [&'a [A]; K],
+    starts: &'a [I],
+    i: usize,
+}
+
 impl<A, I, const K: usize> Capt<K, A, I>
 where
     A: Axis,
@@ -849,6 +867,27 @@ where
         })
     }
 
+    /// Get an iterator over the points in this Capt.
+    /// The iterator skips non-finite points.
+    /// It makes no guarantee of iteration order.
+    ///
+    ///
+    /// ```
+    /// # use capt::{Capt, Points};
+    ///
+    /// let capt = Capt::<2>::new(&[[0.0, 1.0]], (0.0, f32::INFINITY), 1);
+    /// for point in capt.points() {
+    ///     println!("{point:?}");
+    /// }
+    /// ```
+    pub fn points(&self) -> Points<'_, K, A, I> {
+        Points {
+            afforded: self.afforded.each_ref().map(|x| &**x),
+            starts: &self.starts,
+            i: 0,
+        }
+    }
+
     #[must_use]
     #[doc(hidden)]
     /// Get the total memory used (stack + heap) by this structure, measured in bytes.
@@ -981,6 +1020,45 @@ where
                     Simd::<A, L>::mask_any(dists_sq.simd_le(rs_sq))
                 })
             })
+    }
+}
+
+impl<const K: usize, A: Axis, I: Index> Iterator for Points<'_, K, A, I> {
+    type Item = [A; K];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.i + 1 < self.starts.len() {
+            let j = self.starts[self.i]
+                .try_into()
+                .map_err(|_| ())
+                .expect("must be able to convert index into usize");
+            let j2 = self.starts[self.i + 1]
+                .try_into()
+                .map_err(|_| ())
+                .expect("must be able to convert index into usize");
+            self.i += 1;
+
+            if j == j2 {
+                // zero points in the afforded set
+                continue;
+            }
+            let ret = self.afforded.map(|a| a[j]);
+
+            // skip non-finite points
+            if ret.iter().all(|x| x.is_finite()) {
+                return Some(ret);
+            }
+        }
+        None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = if self.i + 1 >= self.starts.len() {
+            0
+        } else {
+            self.starts.len() - self.i - 1
+        };
+        (0, Some(n))
     }
 }
 
@@ -1192,5 +1270,38 @@ mod tests {
         let capt: Capt<_, _, u32> = Capt::with_point_radius(&points, r_range, 0.5, 8);
         assert!(capt.collides(&[0.6, 0.0], 0.2));
         assert!(!capt.collides(&[0.6, 0.0], 0.05));
+    }
+
+    #[test]
+    fn get_points() {
+        let mut points = [
+            [-1.0, 0.0],
+            [0.001, 0.0],
+            [0.0, 0.5],
+            [-1.0, 10.0],
+            [-2.0, 10.0],
+            [-3.0, 10.0],
+            [-0.5, 0.0],
+            [-11.0, 1.0],
+            [-1.0, -0.5],
+            [1.0, 1.0],
+            [2.0, 2.0],
+            [3.0, 3.0],
+            [4.0, 4.0],
+            [5.0, 5.0],
+            [6.0, 6.0],
+            [7.0, 7.0],
+            [9.0, 0.0],
+        ];
+
+        // sort points in order
+        points.sort_by(|p1, p2| p1.partial_cmp(&p2).unwrap());
+
+        let capt = Capt::<2>::new(&points, (0.0, 0.1), 1);
+        println!("{:?}", capt);
+        let mut points2 = capt.points().collect::<Vec<_>>();
+        points2.sort_by(|p1, p2| p1.partial_cmp(&p2).unwrap());
+
+        assert_eq!(&points, &*points2);
     }
 }
