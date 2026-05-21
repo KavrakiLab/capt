@@ -875,7 +875,7 @@ where
     /// let capt16 = Capt::<1>::new(&[[0.0]], (0.0, f32::INFINITY), 16);
     /// assert_eq!(capt16.n_lanes(), 16);
     /// ```
-    pub fn n_lanes(&self) -> usize {
+    pub const fn n_lanes(&self) -> usize {
         1 << (self.lanes_log2 as usize)
     }
 
