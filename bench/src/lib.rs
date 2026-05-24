@@ -22,7 +22,7 @@ pub fn get_points(n_points_if_no_cloud: usize) -> Box<[[f32; 3]]> {
     let mut rng = ChaCha20Rng::seed_from_u64(2707);
 
     if args.len() > 1 {
-        eprintln!("Loading pointcloud from {}", &args[1]);
+        eprintln!("Loading pointcloud from {}", args[1]);
         parse_pointcloud_csv(&args[1]).unwrap()
     } else {
         eprintln!("No pointcloud file! Using N={n_points_if_no_cloud}");

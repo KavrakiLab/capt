@@ -711,7 +711,7 @@ where
                         n_points_added += 1;
                     }
 
-                    assert!(afforded[0].len() & lanes_mask == 0);
+                    assert_eq!(afforded[0].len() & lanes_mask, 0);
                     for k in 0..(K - 1) {
                         assert_eq!(afforded[k].len(), afforded[k + 1].len());
                     }
