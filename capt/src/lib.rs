@@ -1306,12 +1306,12 @@ mod tests {
         ];
 
         // sort points in order
-        points.sort_by(|p1, p2| p1.partial_cmp(&p2).unwrap());
+        points.sort_by(|p1, p2| p1.partial_cmp(p2).unwrap());
 
         let capt = Capt::<2>::new(&points, (0.0, 0.1), 1);
-        println!("{:?}", capt);
+        println!("{capt:?}");
         let mut points2 = capt.points().collect::<Vec<_>>();
-        points2.sort_by(|p1, p2| p1.partial_cmp(&p2).unwrap());
+        points2.sort_by(|p1, p2| p1.partial_cmp(p2).unwrap());
 
         assert_eq!(&points, &*points2);
     }
