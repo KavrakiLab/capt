@@ -326,16 +326,27 @@ where
     Simd<A, L>: AxisSimd<L>,
     A: AxisSimdElement,
 {
-    let mut test_idxs: Simd<isize, L> = Simd::splat(0);
-    let mut k = 0;
-    for _ in 0..tests.len().trailing_ones() {
+    let n_levels = tests.len().trailing_ones();
+    if n_levels == 0 {
+        // A single-cell tree has every query land in cell 0.
+        return Simd::splat(0);
+    }
+
+    // save a gather by unrolling the first iteration
+    let one = Simd::splat(1);
+    let root = Simd::splat(tests[0]);
+    let cmp: Mask<isize, L> = Simd::<A, L>::cast_mask(centers[0].simd_ge(root));
+    // `2 * 0 + 1 + bit` == `1 + bit`.
+    let mut test_idxs: Simd<isize, L> = one + (cmp.to_simd() & one);
+    let mut k = 1 % K;
+
+    for _ in 1..n_levels {
         let test_ptrs = Simd::splat(tests.as_ptr()).wrapping_offset(test_idxs);
         let relevant_tests: Simd<A, L> = unsafe { Simd::gather_ptr(test_ptrs) };
         let cmp_results: Mask<isize, L> =
-            Simd::<A, L>::cast_mask(centers[k % K].simd_ge(relevant_tests));
+            Simd::<A, L>::cast_mask(centers[k].simd_ge(relevant_tests));
 
-        let one = Simd::splat(1);
-        test_idxs = (test_idxs << one) + one + (cmp_results.to_simd() & Simd::splat(1));
+        test_idxs = (test_idxs << one) + one + (cmp_results.to_simd() & one);
         k = (k + 1) % K;
     }
 
