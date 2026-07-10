@@ -905,7 +905,7 @@ where
     /// This function should not be considered stable; it is only used internally for benchmarks.
     pub fn memory_used(&self) -> usize {
         size_of::<Self>()
-            + K * self.afforded.len() * size_of::<A>()
+            + K * self.afforded[0].len() * size_of::<A>()
             + self.starts.len() * size_of::<I>()
             + self.tests.len() * size_of::<I>()
             + self.aabbs.len() * size_of::<Aabb<A, K>>()
@@ -917,7 +917,7 @@ where
     /// Get the average number of affordances per point.
     /// This function should not be considered stable; it is only used internally for benchmarks.
     pub fn affordance_size(&self) -> f64 {
-        self.afforded.len() as f64 / (self.tests.len() + 1) as f64
+        self.afforded[0].len() as f64 / (self.tests.len() + 1) as f64
     }
 }
 
