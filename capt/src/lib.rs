@@ -850,10 +850,18 @@ where
             return false;
         }
 
-        let mut range = unsafe {
-            // SAFETY: The conversion worked the first way.
-            self.starts[i].try_into().unwrap_unchecked()
-                ..self.starts[i + 1].try_into().unwrap_unchecked()
+        let (start, end) = unsafe {
+            // SAFETY: `i + 1 < self.starts.len()` always holds, since `i` indexes a leaf cell and
+            // `starts` has one extra trailing element past the last leaf.
+            // The conversions to `usize` cannot fail, since they succeeded during construction.
+            (
+                (*self.starts.get_unchecked(i))
+                    .try_into()
+                    .unwrap_unchecked(),
+                (*self.starts.get_unchecked(i + 1))
+                    .try_into()
+                    .unwrap_unchecked(),
+            )
         };
 
         // check affordance buffer
