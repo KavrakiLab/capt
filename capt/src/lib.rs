@@ -214,6 +214,9 @@ pub trait AxisSimd<const L: usize>:
     fn cast_mask(mask: <Self as SimdPartialEq>::Mask) -> Mask<isize, L>;
     /// Determine whether a mask contains any true elements.
     fn mask_any(mask: <Self as SimdPartialEq>::Mask) -> bool;
+    /// Lane-wise maximum of `self` and `other`.
+    #[must_use]
+    fn simd_max(self, other: Self) -> Self;
 }
 
 /// An index type used for lookups into and out of arrays.
@@ -271,6 +274,9 @@ macro_rules! impl_axis {
             }
             fn mask_any(mask: <Self as SimdPartialEq>::Mask) -> bool {
                 mask.any()
+            }
+            fn simd_max(self, other: Self) -> Self {
+                <Self as core::simd::num::SimdFloat>::simd_max(self, other)
             }
         }
     };
@@ -1092,7 +1098,9 @@ where
         );
         radii += Simd::splat(self.r_point);
 
-        // Fast rejection against the bounding box of every point in the tree
+        // Fast rejection against the bounding box of every point in the tree. This uses the
+        // cheap per-axis interval-overlap test rather than the true point-to-box distance: the
+        // accurate test was measured to be ~2-2.5% slower here.
         let mut top_inbounds = Mask::splat(true);
         for (k, center) in centers.iter().enumerate() {
             top_inbounds &= Simd::<A, L>::cast_mask(
@@ -1109,27 +1117,25 @@ where
 
         let zs = forward_pass_simd(&self.tests, centers);
 
-        let mut inbounds = Mask::splat(true);
-
-        let mut aabb_ptrs = Simd::splat(self.aabbs.as_ptr()).wrapping_offset(zs).cast();
-
+        // Per-leaf rejection against each lane's cell AABB, using the true squared
+        // point-to-box distance. Unlike the whole-tree top check above, the tighter test is worth
+        // it here. `Aabb` is `#[repr(C)] { lo: [A; K], hi: [A; K] }`, so `lo[k]`/`hi[k]`
+        // sit at offsets `k` and `K + k` from the cell base.
+        let base_ptrs = Simd::splat(self.aabbs.as_ptr())
+            .wrapping_offset(zs)
+            .cast::<A>();
+        let rsq = radii * radii;
+        let zero = Simd::splat(A::ZERO);
+        let mut distsq = zero;
         unsafe {
-            for center in centers {
-                inbounds &= Simd::<A, L>::cast_mask(
-                    (Simd::gather_select_ptr(aabb_ptrs, inbounds, Simd::splat(A::NEG_INFINITY))
-                        - radii)
-                        .simd_le(*center),
-                );
-                aabb_ptrs = aabb_ptrs.wrapping_add(Simd::splat(1));
-            }
-            for center in centers {
-                inbounds &= Simd::<A, L>::cast_mask(
-                    Simd::gather_select_ptr(aabb_ptrs, inbounds, Simd::splat(A::NEG_INFINITY))
-                        .simd_ge(*center - radii),
-                );
-                aabb_ptrs = aabb_ptrs.wrapping_add(Simd::splat(1));
+            for (k, center) in centers.iter().enumerate() {
+                let lo = Simd::gather_ptr(base_ptrs.wrapping_add(Simd::splat(k)));
+                let hi = Simd::gather_ptr(base_ptrs.wrapping_add(Simd::splat(K + k)));
+                let outside = (lo - *center).simd_max(*center - hi).simd_max(zero);
+                distsq += outside * outside;
             }
         }
+        let inbounds = Simd::<A, L>::cast_mask(distsq.simd_le(rsq));
         if !inbounds.any() {
             return false;
         }
