@@ -1,6 +1,11 @@
 use std::{
     mem::size_of,
-    simd::{cmp::SimdPartialOrd, num::SimdInt, ptr::SimdConstPtr, Mask, Simd},
+    simd::{
+        cmp::{SimdPartialEq, SimdPartialOrd},
+        num::SimdInt,
+        ptr::SimdConstPtr,
+        Mask, Simd,
+    },
 };
 
 use crate::{distsq, forward_pass, median_partition};
@@ -211,6 +216,7 @@ fn forward_pass_simd<A, const K: usize, const L: usize>(
 where
     Simd<A, L>: AxisSimd<L>,
     A: AxisSimdElement,
+    <Simd<A, L> as SimdPartialEq>::Mask: Copy,
 {
     let mut i: Simd<usize, L> = Simd::splat(0);
     let mut k = 0;
