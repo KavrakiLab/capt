@@ -92,24 +92,15 @@ fn morton_index(
 }
 
 fn pdep(a: u32, mut mask: u32) -> u32 {
-    #[cfg(target_feature = "bmi2")]
-    {
-        unsafe {
-            return core::arch::x86_64::_pdep_u32(a, mask);
+    let mut out = 0;
+    for i in 0..mask.count_ones() {
+        let bit = mask & !(mask - 1);
+        if a & (1 << i) != 0 {
+            out |= bit;
         }
+        mask ^= bit;
     }
-    #[cfg(not(target_feature = "bmi2"))]
-    {
-        let mut out = 0;
-        for i in 0..mask.count_ones() {
-            let bit = mask & !(mask - 1);
-            if a & (1 << i) != 0 {
-                out |= bit;
-            }
-            mask ^= bit;
-        }
-        out
-    }
+    out
 }
 
 #[cfg(test)]
