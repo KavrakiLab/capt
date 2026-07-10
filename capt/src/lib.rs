@@ -1347,6 +1347,43 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "simd")]
+    #[test]
+    fn fuzz_simd_dense() {
+        use core::simd::Simd;
+
+        const R: f32 = 0.25;
+        const L: usize = 8;
+        let mut rng = SmallRng::seed_from_u64(9001);
+        // A moderately dense cloud so that leaf cells hold several afforded points and the
+        // per-lane SIMD scan in `collides_simd` actually runs.
+        let points: Vec<[f32; 3]> = (0..3000)
+            .map(|_| {
+                [
+                    rng.random_range(-3.0..3.0),
+                    rng.random_range(-3.0..3.0),
+                    rng.random_range(-3.0..3.0),
+                ]
+            })
+            .collect();
+        let t = Capt::<3, f32, u32>::new(&points, (0.0, R), L);
+
+        for _ in 0..3_000 {
+            let centers: [Simd<f32, L>; 3] = array::from_fn(|_| {
+                Simd::from_array(array::from_fn(|_| rng.random_range(-3.0..3.0)))
+            });
+            let radii = Simd::from_array(array::from_fn(|_| rng.random_range(0.0..R)));
+
+            // ground truth: does any lane's sphere contain any point?
+            let expected = (0..L).any(|l| {
+                let q = [centers[0][l], centers[1][l], centers[2][l]];
+                let r = radii[l];
+                points.iter().any(|a| distsq(*a, q) <= r * r)
+            });
+            assert_eq!(expected, t.collides_simd(&centers, radii));
+        }
+    }
+
     #[test]
     fn fuzz_f64_dense() {
         const R: f64 = 0.3;
