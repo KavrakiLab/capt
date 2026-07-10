@@ -890,12 +890,7 @@ where
         }
 
         // retrieve affordance buffer location
-        let rsq = radius.square();
         let i = test_idx - self.tests.len();
-        let aabb = unsafe { self.aabbs.get_unchecked(i) };
-        if aabb.closest_distsq_to(center) > rsq {
-            return false;
-        }
 
         let (start, end) = unsafe {
             // SAFETY: `i + 1 < self.starts.len()` always holds, since `i` indexes a leaf cell and
@@ -910,6 +905,17 @@ where
                     .unwrap_unchecked(),
             )
         };
+
+        // The per-leaf AABB early-out only earns its keep for cells big enough that rejecting
+        // saves a real scan. For a single-block cell (the common case — usually one representative
+        // point plus padding) `aabb.closest_distsq_to` just recomputes the same distance the
+        // one scan block is about to compute anyway, so skip it and go straight to the scan.
+        if end - start > MIN_SCAN_LANES {
+            let aabb = unsafe { self.aabbs.get_unchecked(i) };
+            if aabb.closest_distsq_to(center) > rsq {
+                return false;
+            }
+        }
 
         // SAFETY: `start..end` is a valid range into every `self.afforded[k]`, since it was
         // produced from two adjacent entries of `self.starts`.
