@@ -88,7 +88,7 @@ use core::{
 use core::{
     ops::{AddAssign, Mul, SubAssign},
     simd::{
-        Mask, Simd, SimdElement,
+        Mask, Select, Simd, SimdElement,
         cmp::{SimdPartialEq, SimdPartialOrd},
         ptr::SimdConstPtr,
     },
@@ -209,6 +209,8 @@ pub trait AxisSimd<const L: usize>:
     + Sub<Output = Self>
     + SubAssign
     + Mul<Output = Self>
+where
+    <Self as SimdPartialEq>::Mask: Copy,
 {
     /// Cast a mask for a SIMD vector into a mask of `isize`s.
     fn cast_mask(mask: <Self as SimdPartialEq>::Mask) -> Mask<isize, L>;
@@ -217,6 +219,14 @@ pub trait AxisSimd<const L: usize>:
     /// Lane-wise maximum of `self` and `other`.
     #[must_use]
     fn simd_max(self, other: Self) -> Self;
+    /// Lane-wise select: `mask`'s true lanes take from `true_values`, false lanes from
+    /// `false_values`.
+    #[must_use]
+    fn select_native(
+        mask: <Self as SimdPartialEq>::Mask,
+        true_values: Self,
+        false_values: Self,
+    ) -> Self;
 }
 
 /// An index type used for lookups into and out of arrays.
@@ -278,6 +288,13 @@ macro_rules! impl_axis {
             fn simd_max(self, other: Self) -> Self {
                 <Self as core::simd::num::SimdFloat>::simd_max(self, other)
             }
+            fn select_native(
+                mask: <Self as SimdPartialEq>::Mask,
+                true_values: Self,
+                false_values: Self,
+            ) -> Self {
+                mask.select(true_values, false_values)
+            }
         }
     };
 }
@@ -331,6 +348,7 @@ fn forward_pass_simd<A, const K: usize, const L: usize>(
 where
     Simd<A, L>: AxisSimd<L>,
     A: AxisSimdElement,
+    <Simd<A, L> as SimdPartialEq>::Mask: Copy,
 {
     let n_levels = tests.len().trailing_ones();
     if n_levels == 0 {
@@ -341,12 +359,24 @@ where
     // save a gather by unrolling the first iteration
     let one = Simd::splat(1);
     let root = Simd::splat(tests[0]);
-    let cmp: Mask<isize, L> = Simd::<A, L>::cast_mask(centers[0].simd_ge(root));
+    let cmp0 = centers[0].simd_ge(root);
+    let cmp: Mask<isize, L> = Simd::<A, L>::cast_mask(cmp0);
     // `2 * 0 + 1 + bit` == `1 + bit`.
     let mut test_idxs: Simd<isize, L> = one + (cmp.to_simd() & one);
     let mut k = 1 % K;
 
-    for _ in 1..n_levels {
+    if n_levels >= 2 {
+        // Unroll the second iteration too: at this point `test_idxs` is either 1 or 2, so the
+        // next test value is one of exactly two options (`tests[1]` or `tests[2]`).
+        let relevant_tests =
+            Simd::<A, L>::select_native(cmp0, Simd::splat(tests[2]), Simd::splat(tests[1]));
+        let cmp_results: Mask<isize, L> =
+            Simd::<A, L>::cast_mask(centers[k].simd_ge(relevant_tests));
+        test_idxs = (test_idxs << one) + one + (cmp_results.to_simd() & one);
+        k = (k + 1) % K;
+    }
+
+    for _ in 2..n_levels {
         let test_ptrs = Simd::splat(tests.as_ptr()).wrapping_offset(test_idxs);
         let relevant_tests: Simd<A, L> = unsafe { Simd::gather_ptr(test_ptrs) };
         let cmp_results: Mask<isize, L> =
@@ -1090,6 +1120,7 @@ where
     where
         Simd<A, L>: AxisSimd<L>,
         A: AxisSimdElement,
+        <Simd<A, L> as SimdPartialEq>::Mask: Copy,
     {
         assert!(L.is_power_of_two(), "lane count must be power of two");
         assert!(
