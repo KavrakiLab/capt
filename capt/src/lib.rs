@@ -300,6 +300,10 @@ impl_idx!(u32);
 impl_idx!(u64);
 impl_idx!(usize);
 
+/// Number of affordance points [`Capt::scan_afforded`] processes per auto-vectorized block. Matches
+/// the width of a 256-bit SIMD register for `f32` (e.g. AVX2).
+const MIN_SCAN_LANES: usize = 8;
+
 /// Clamp a floating-point number.
 fn clamp<A: PartialOrd>(x: A, min: A, max: A) -> A {
     if x < min {
@@ -671,10 +675,17 @@ where
         i: usize,
         r_range: (A, A),
         lanes_log2: u32,
-        in_range: Vec<[A; K]>,
+        mut in_range: Vec<[A; K]>,
         cell: Aabb<A, K>,
     ) -> Result<(), NewCaptError> {
-        let lanes_mask = (1 << lanes_log2) - 1;
+        // Every cell's affordance buffer is padded out to a multiple of `lanes_mask + 1`
+        // elements, matching the tree's requested `n_lanes`.
+        //
+        // It's tempting to always pad to at least `MIN_SCAN_LANES`, regardless of `n_lanes`, so
+        // that `Capt::collides`'s auto-vectorized scan always has a full block to work with, even
+        // for a `Capt` constructed with `n_lanes == 1`. Real point clouds make this a bad trade:
+        // most cells in a well-built CAPT hold only their single representative point.
+        let lanes_mask = (1usize << lanes_log2) - 1;
         unsafe {
             let rsq_min = r_range.0.square();
             if let [rep] = *points {
@@ -743,11 +754,28 @@ where
             // retain only points which might be in the affordance buffer for the split-out cells
             let (lo_afford, hi_afford) = match (lo_too_small, hi_too_small) {
                 (false, false) => {
+                    // A single pass over `in_range` builds `hi_afford` fresh, while compacting the
+                    // points that belong in `lo_afford` into `in_range`'s own storage in place
+                    // (`write <= read` always, so this never reads a slot after it's been
+                    // overwritten). This needs only one new allocation instead of two: the
+                    // straightforward version (`clone` + two `retain`s, or two freshly
+                    // `Vec::with_capacity`-ed outputs) always allocates twice, once for each side,
+                    // even though one side can always reuse `in_range` directly.
+                    let mut hi_afford = Vec::with_capacity(in_range.len() + lhs.len());
+                    let mut write = 0;
+                    for read in 0..in_range.len() {
+                        let pt = in_range[read];
+                        if pt[k].is_finite() && test - r_range.1 <= pt[k] {
+                            hi_afford.push(pt);
+                        }
+                        if pt[k] <= test + r_range.1 {
+                            in_range[write] = pt;
+                            write += 1;
+                        }
+                    }
+                    in_range.truncate(write);
                     let mut lo_afford = in_range;
-                    let mut hi_afford = lo_afford.clone();
-                    lo_afford.retain(|pt| pt[k] <= test + r_range.1);
                     lo_afford.extend(rhs.iter().filter(|pt| pt[k] <= test + r_range.1));
-                    hi_afford.retain(|pt| pt[k].is_finite() && test - r_range.1 <= pt[k]);
                     hi_afford.extend(
                         lhs.iter()
                             .filter(|pt| pt[k].is_finite() && test - r_range.1 <= pt[k]),
@@ -864,11 +892,58 @@ where
             )
         };
 
-        // check affordance buffer
-        range.any(|i| {
-            let aff_pt = array::from_fn(|k| self.afforded[k][i]);
-            distsq(aff_pt, *center) <= rsq
-        })
+        // SAFETY: `start..end` is a valid range into every `self.afforded[k]`, since it was
+        // produced from two adjacent entries of `self.starts`.
+        unsafe { self.scan_afforded(start, end, center, rsq) }
+    }
+
+    #[inline]
+    /// Scan the affordance buffer over the half-open range `start..end`, searching for any point
+    /// within a squared distance of `rsq` from `center`.
+    ///
+    /// Unlike a naive per-point scan, this processes the affordance buffer in fixed-size blocks
+    /// with no early exit inside a block, which lets the compiler auto-vectorize the distance
+    /// computation (mirroring the hand-vectorized inner loop of the reference C++
+    /// implementation) whenever a cell happens to have at least [`MIN_SCAN_LANES`] afforded
+    /// points, while a scalar loop (unavoidably the common case, since most cells hold only their
+    /// single representative point) handles the remaining tail.
+    ///
+    /// # Safety
+    ///
+    /// `start..end` must be a valid range of indices into `self.afforded[k]` for every `k < K`.
+    unsafe fn scan_afforded(&self, start: usize, end: usize, center: &[A; K], rsq: A) -> bool {
+        let ptrs: [*const A; K] = array::from_fn(|k| self.afforded[k].as_ptr());
+        let mut idx = start;
+
+        unsafe {
+            while idx + MIN_SCAN_LANES <= end {
+                let mut dists = [A::ZERO; MIN_SCAN_LANES];
+                for (k, &base) in ptrs.iter().enumerate() {
+                    let c = center[k];
+                    let block = base.add(idx);
+                    for (j, d) in dists.iter_mut().enumerate() {
+                        *d = *d + (*block.add(j) - c).square();
+                    }
+                }
+                if dists.iter().any(|&d| d <= rsq) {
+                    return true;
+                }
+                idx += MIN_SCAN_LANES;
+            }
+
+            while idx < end {
+                let mut d = A::ZERO;
+                for (k, &base) in ptrs.iter().enumerate() {
+                    d = d + (*base.add(idx) - center[k]).square();
+                }
+                if d <= rsq {
+                    return true;
+                }
+                idx += 1;
+            }
+        }
+
+        false
     }
 
     /// Get the number of supported SIMD query lanes in this `Capt`.
