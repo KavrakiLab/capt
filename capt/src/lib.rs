@@ -1230,6 +1230,32 @@ mod tests {
     }
 
     #[test]
+    fn fuzz_f64_dense() {
+        const R: f64 = 0.3;
+        let mut rng = SmallRng::seed_from_u64(42);
+        let points: Vec<[f64; 3]> = (0..2000)
+            .map(|_| {
+                [
+                    rng.random_range(-5.0..5.0),
+                    rng.random_range(-5.0..5.0),
+                    rng.random_range(-5.0..5.0),
+                ]
+            })
+            .collect();
+        let t = Capt::<3, f64, u32>::new(&points, (0.0, R), 1);
+
+        for _ in 0..5_000 {
+            let p = [
+                rng.random_range(-5.0..5.0),
+                rng.random_range(-5.0..5.0),
+                rng.random_range(-5.0..5.0),
+            ];
+            let collides = points.iter().any(|a| distsq(*a, p) <= R * R);
+            assert_eq!(collides, t.collides(&p, R), "query point {p:?}");
+        }
+    }
+
+    #[test]
     /// This test _should_ fail, but it doesn't somehow?
     fn weird_bounds() {
         const R_SQ: f32 = 1.0;
