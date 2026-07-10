@@ -386,6 +386,9 @@ pub struct Capt<const K: usize, A = f32, I = usize> {
     starts: Box<[I]>,
     /// The sets of afforded points for each cell.
     afforded: [ABox<[A], RuntimeAlign>; K],
+    /// The bounding box of every (finite) point in the tree, used to reject queries that cannot
+    /// possibly collide before paying for a tree traversal at all.
+    aabb_top: Aabb<A, K>,
     r_point: A,
     /// Log-base-2 of the number of lanes in this tree.
     lanes_log2: u32,
@@ -634,6 +637,14 @@ where
         ]
         .into_boxed_slice();
 
+        let mut aabb_top = Aabb {
+            lo: [A::INFINITY; K],
+            hi: [A::NEG_INFINITY; K],
+        };
+        for p in points {
+            aabb_top.insert(p);
+        }
+
         unsafe {
             // SAFETY: We tested that `points` contains no `NaN` values.
             Self::new_help(
@@ -656,6 +667,7 @@ where
             starts,
             afforded: afforded.map(AVec::into_boxed_slice),
             aabbs,
+            aabb_top,
             r_point,
             lanes_log2,
         })
@@ -860,6 +872,13 @@ where
     /// ```
     pub fn collides(&self, center: &[A; K], mut radius: A) -> bool {
         radius = radius + self.r_point;
+        let rsq = radius.square();
+
+        // Fast rejection against the bounding box of every point in the tree
+        if self.aabb_top.closest_distsq_to(center) > rsq {
+            return false;
+        }
+
         // forward pass through the tree
         let mut test_idx = 0;
         let mut k = 0;
@@ -1055,6 +1074,22 @@ where
             "lane count of query must be lower than lane count of CAPT"
         );
         radii += Simd::splat(self.r_point);
+
+        // Fast rejection against the bounding box of every point in the tree
+        let mut top_inbounds = Mask::splat(true);
+        for (k, center) in centers.iter().enumerate() {
+            top_inbounds &= Simd::<A, L>::cast_mask(
+                (Simd::splat(self.aabb_top.lo[k]) - radii).simd_le(*center),
+            );
+        }
+        for (k, center) in centers.iter().enumerate() {
+            top_inbounds &=
+                Simd::<A, L>::cast_mask(Simd::splat(self.aabb_top.hi[k]).simd_ge(*center - radii));
+        }
+        if !top_inbounds.any() {
+            return false;
+        }
+
         let zs = forward_pass_simd(&self.tests, centers);
 
         let mut inbounds = Mask::splat(true);
